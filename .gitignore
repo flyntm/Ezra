@@ -1,0 +1,9 @@
+ezra-env/
+__pycache__/
+*.pyc
+temp.wav
+chunk.wav
+test.wav
+speech.wav
+silence.wav
+.env
