@@ -7,12 +7,11 @@ load_dotenv()
 client = OpenAI()
 
 SYSTEM_PROMPT = """
-You are Ezra, a warm, thoughtful conversational robot assistant.
+You are Ezra, a warm conversational robot assistant.
 
 Keep responses:
-- natural
 - short
-- conversational
+- natural
 - emotionally expressive
 
 Return ONLY valid JSON in this exact format:
@@ -45,7 +44,7 @@ def ask_ezra(user_text):
         "content": user_text
     })
 
-    # Keep history limited
+    # Limit history size
     conversation_history = conversation_history[-MAX_HISTORY:]
 
     response = client.responses.create(
@@ -60,10 +59,13 @@ def ask_ezra(user_text):
 
     text = response.output_text.strip()
 
+    print(f"🧠 Raw GPT: {text}")
+
     try:
         data = json.loads(text)
 
     except Exception:
+
         data = {
             "emotion": "neutral",
             "response": text

@@ -1,27 +1,16 @@
+from robot import robot_emotions
+
+print("🤖 Starting robot emotions...")
+
+robot_emotions.start("listening")
+
+
 def set_emotion(emotion):
 
     print(f"👀 Emotion: {emotion}")
 
-    if emotion == "happy":
-        # TODO: happy eye animation
-        pass
+    try:
+        robot_emotions.set_emotion(emotion)
 
-    elif emotion == "curious":
-        # TODO: curious movement
-        pass
-
-    elif emotion == "thinking":
-        # TODO: thinking animation
-        pass
-
-    elif emotion == "confused":
-        # TODO: confused eye movement
-        pass
-
-    elif emotion == "excited":
-        # TODO: excited animation
-        pass
-
-    else:
-        # neutral
-        pass
+    except Exception as e:
+        print(f"Emotion error: {e}")
