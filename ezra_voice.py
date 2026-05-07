@@ -1,146 +1,265 @@
-import warnings
-warnings.filterwarnings("ignore", message="FP16 is not supported on CPU")
-
-import subprocess
-import scipy.io.wavfile as wav
-import scipy.signal
-import numpy as np
-import whisper
 import os
-import time
-from openai import OpenAI
+import sys
+import signal
+import contextlib
+import subprocess
+import numpy as np
+import scipy.io.wavfile as wav
+
 from dotenv import load_dotenv
+from faster_whisper import WhisperModel
 
-# Load API key
+from ezra_brain import ask_ezra
+from ezra_emotion import set_emotion
+
+
+# 🔥 FULL stderr suppression
+@contextlib.contextmanager
+def suppress_stderr_fully():
+
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    old_stderr_fd = os.dup(2)
+
+    os.dup2(devnull, 2)
+
+    try:
+        yield
+
+    finally:
+        os.dup2(old_stderr_fd, 2)
+        os.close(devnull)
+        os.close(old_stderr_fd)
+
+
+print("🚀 Starting Ezra...")
+
 load_dotenv()
-client = OpenAI()
 
-# Load Whisper model
-model = whisper.load_model("base")
+print("🧠 Loading Whisper model...")
 
-duration = 4  # seconds
+with suppress_stderr_fully():
 
+    model = WhisperModel(
+        "base",
+        device="cpu",
+        compute_type="int8"
+    )
 
-# 🔥 AUTO-DETECT MICROPHONE
-def find_usb_mic():
-    result = subprocess.run(["arecord", "-l"], capture_output=True, text=True)
-    lines = result.stdout.split("\n")
-
-    for line in lines:
-        if "USB" in line or "MIC" in line:
-            # Example line:
-            # card 3: MIC [USB MIC], device 0
-            parts = line.split()
-            card_index = parts[1].replace(":", "")
-            return f"plughw:{card_index},0"
-
-    return None
+print("✅ Model loaded")
 
 
-MIC_DEVICE = find_usb_mic()
+# 🎤 Audio Settings
+MIC_DEVICE = "plughw:3,0"
 
-if MIC_DEVICE is None:
-    print("❌ No USB microphone found!")
-    exit()
+CHUNK_DURATION = 1
 
-print(f"🎤 Using microphone: {MIC_DEVICE}")
+START_THRESHOLD = 0.07
+SILENCE_THRESHOLD = 0.03
 
-
-def record_audio(filename="temp.wav"):
-    print("\n🎤 Listening...")
-
-    cmd = [
-        "arecord",
-        "-D", MIC_DEVICE,
-        "-f", "S16_LE",
-        "-r", "44100",
-        "-d", str(duration),
-        filename
-    ]
-
-    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-    if not os.path.exists(filename):
-        print("❌ Recording failed")
-        return False
-
-    return True
+SILENCE_LIMIT = 2
+MIN_AUDIO_LENGTH = 1.2
 
 
-def listen():
-    success = record_audio()
+current_proc = None
 
-    if not success:
+
+# 🛑 Clean shutdown
+def signal_handler(sig, frame):
+
+    global current_proc
+
+    print("\n🛑 Shutting down Ezra...")
+
+    if current_proc:
+        try:
+            current_proc.terminate()
+        except:
+            pass
+
+    sys.exit(0)
+
+
+signal.signal(signal.SIGINT, signal_handler)
+
+
+# 🎤 Record chunk
+def record_chunk():
+
+    global current_proc
+
+    current_proc = subprocess.Popen(
+        [
+            "arecord",
+            "-D", MIC_DEVICE,
+            "-f", "S16_LE",
+            "-r", "16000",
+            "-d", str(CHUNK_DURATION),
+            "chunk.wav"
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
+    )
+
+    current_proc.wait()
+    current_proc = None
+
+
+# 📥 Read audio safely
+def get_audio():
+
+    try:
+        fs, audio = wav.read("chunk.wav")
+
+    except Exception:
+        print("⚠️ Bad audio chunk")
         return None
 
-    fs, audio = wav.read("temp.wav")
+    if audio.dtype == np.int16:
+        audio = audio.astype(np.float32) / 32768.0
 
-    # Convert to float
-    audio = audio.astype(np.float32) / 32768.0
-
-    # Stereo → mono if needed
     if len(audio.shape) > 1:
         audio = np.mean(audio, axis=1)
 
-    # RMS level
-    rms = np.sqrt(np.mean(audio**2))
-    print(f"Audio RMS level: {rms:.4f}")
+    # Remove DC offset
+    audio = audio - np.mean(audio)
 
-    if rms < 0.02:
-        print("...silence...")
+    return audio
+
+
+# 🎤 Listen for speech
+def listen():
+
+    print("🎤 Listening...")
+
+    recording = []
+    speaking = False
+
+    silence_counter = 0
+    speech_chunks = 0
+
+    while True:
+
+        record_chunk()
+
+        audio = get_audio()
+
+        if audio is None:
+            continue
+
+        rms = np.sqrt(np.mean(audio**2))
+
+        print(f"Level: {rms:.3f}")
+
+        # Speech start
+        if not speaking and rms > START_THRESHOLD:
+
+            speaking = True
+            print("🟢 Speech detected")
+
+        if speaking:
+
+            recording.extend(audio)
+            speech_chunks += 1
+
+            # Silence detection
+            if rms < SILENCE_THRESHOLD:
+                silence_counter += 1
+            else:
+                silence_counter = 0
+
+            # Stop recording
+            if silence_counter >= SILENCE_LIMIT and speech_chunks > 3:
+
+                print("🔴 End of speech")
+                break
+
+    # Ignore too-short clips
+    if len(recording) < 16000 * MIN_AUDIO_LENGTH:
+
+        print("⚠️ Too short, ignoring")
         return None
+
+    return np.array(recording)
+
+
+# 🧠 Transcribe
+def transcribe(audio):
 
     print("🧠 Transcribing...")
 
-    # Resample to 16kHz
-    audio_16k = scipy.signal.resample_poly(audio, 16000, fs)
-    wav.write("temp.wav", 16000, audio_16k)
+    wav.write("temp.wav", 16000, audio)
 
-    result = model.transcribe("temp.wav", language="en")
+    with suppress_stderr_fully():
 
-    text = result["text"].strip()
+        segments, _ = model.transcribe(
+            "temp.wav",
+            language="en",
+            beam_size=5,
+            vad_filter=True
+        )
+
+    text = " ".join([seg.text for seg in segments]).strip()
+
     print(f"You said: {text}")
 
     return text
 
 
-def ask_ezra(user_input):
-    response = client.responses.create(
-        model="gpt-4.1-mini",
-        input=f"""
-You are Ezra, a friendly and wise robotic assistant.
-Keep responses short and conversational.
-
-User: {user_input}
-"""
-    )
-    return response.output_text
-
-
+# 🔊 Piper speech
 def speak(text):
+
     print(f"Ezra: {text}")
-    os.system(f'espeak "{text}"')
+
+    cmd = (
+        f'echo "{text}" | '
+        f'~/projects/piper_tts/piper '
+        f'--model ~/projects/piper_tts/en_US-lessac-medium.onnx '
+        f'--output_file temp.wav '
+        f'> /dev/null 2>&1'
+    )
+
+    os.system(cmd)
+
+    os.system(
+        "aplay -D plughw:2,0 temp.wav > /dev/null 2>&1"
+    )
 
 
+# 🔁 Main loop
 def main():
-    print("🤖 Ezra is ready! Speak clearly...\n")
+
+    print("🤖 Ezra ready! (Ctrl+C to exit)\n")
 
     while True:
-        user_input = listen()
 
-        if user_input is None:
-            time.sleep(0.5)
+        audio = listen()
+
+        if audio is None:
             continue
 
-        if "quit" in user_input.lower():
+        text = transcribe(audio)
+
+        if not text:
+            continue
+
+        if "quit" in text.lower():
+
             speak("Goodbye!")
             break
 
-        response = ask_ezra(user_input)
+        # 🧠 Ask brain
+        result = ask_ezra(text)
+
+        emotion = result["emotion"]
+        response = result["response"]
+
+        # 👀 Trigger emotion
+        set_emotion(emotion)
+
+        # 🔊 Speak
         speak(response)
 
-        time.sleep(0.5)
 
-
+# ▶️ Start
 if __name__ == "__main__":
     main()

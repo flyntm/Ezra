@@ -1,44 +1,77 @@
 from openai import OpenAI
-import os
 from dotenv import load_dotenv
+import json
 
 load_dotenv()
 
 client = OpenAI()
 
-def ask_ezra(user_input):
+SYSTEM_PROMPT = """
+You are Ezra, a warm, thoughtful conversational robot assistant.
+
+Keep responses:
+- natural
+- short
+- conversational
+- emotionally expressive
+
+Return ONLY valid JSON in this exact format:
+
+{
+  "emotion": "neutral",
+  "response": "Hello there."
+}
+
+Allowed emotions:
+neutral
+happy
+curious
+thinking
+confused
+excited
+"""
+
+conversation_history = []
+
+MAX_HISTORY = 12
+
+
+def ask_ezra(user_text):
+
+    global conversation_history
+
+    conversation_history.append({
+        "role": "user",
+        "content": user_text
+    })
+
+    # Keep history limited
+    conversation_history = conversation_history[-MAX_HISTORY:]
+
     response = client.responses.create(
         model="gpt-4.1-mini",
-        input=f"""
-You are Ezra, a friendly and wise robotic assistant.
-Keep responses short, conversational, and helpful.
-
-User: {user_input}
-"""
+        input=[
+            {
+                "role": "system",
+                "content": SYSTEM_PROMPT
+            }
+        ] + conversation_history
     )
 
-    return response.output_text
+    text = response.output_text.strip()
 
+    try:
+        data = json.loads(text)
 
-def speak(text):
-    # simple TTS using espeak
-    os.system(f'espeak "{text}"')
+    except Exception:
+        data = {
+            "emotion": "neutral",
+            "response": text
+        }
 
+    conversation_history.append({
+        "role": "assistant",
+        "content": data["response"]
+    })
 
-def main():
-    print("Ezra is ready. Type 'quit' to exit.\n")
-
-    while True:
-        user_input = input("You: ")
-
-        if user_input.lower() == "quit":
-            break
-
-        reply = ask_ezra(user_input)
-
-        print(f"Ezra: {reply}")
-        speak(reply)
-
-
-if __name__ == "__main__":
-    main()
+    return data
