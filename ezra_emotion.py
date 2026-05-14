@@ -1,3 +1,16 @@
+import state
+
+
+def set_emotion(emotion):
+    if state.shutting_down:
+        return
+
+
+def set_emotion(emotion):
+    if shutting_down:
+        return
+
+
 from robot import robot_emotions
 
 print("🤖 Starting robot emotions...")

@@ -3,28 +3,51 @@ import sys
 import signal
 import contextlib
 import subprocess
+import time
+
 import numpy as np
-import scipy.io.wavfile as wav
 
 from dotenv import load_dotenv
+from pathlib import Path
 from faster_whisper import WhisperModel
 
 from ezra_brain import ask_ezra
 from ezra_emotion import set_emotion
 
 
-# 🔥 FULL stderr suppression
+# =========================
+# LOAD ENV
+# =========================
+load_dotenv(Path(__file__).parent / ".env")
+
+
+# =========================
+# CONFIG
+# =========================
+MIC_DEVICE = "plughw:3,0"
+SPEAKER_DEVICE = "plughw:2,0"
+
+CHUNK_DURATION = 0.3
+
+START_THRESHOLD = 0.025
+SILENCE_THRESHOLD = 0.01
+
+SILENCE_LIMIT = 2
+MIN_AUDIO_LENGTH = 1.0
+
+GAIN = 6.0
+
+
+# =========================
+# STDERR SUPPRESSION
+# =========================
 @contextlib.contextmanager
 def suppress_stderr_fully():
-
     devnull = os.open(os.devnull, os.O_WRONLY)
     old_stderr_fd = os.dup(2)
-
     os.dup2(devnull, 2)
-
     try:
         yield
-
     finally:
         os.dup2(old_stderr_fd, 2)
         os.close(devnull)
@@ -33,101 +56,140 @@ def suppress_stderr_fully():
 
 print("🚀 Starting Ezra...")
 
-load_dotenv()
-
 print("🧠 Loading Whisper model...")
-
 with suppress_stderr_fully():
-
     model = WhisperModel(
         "base",
         device="cpu",
         compute_type="int8"
     )
-
 print("✅ Model loaded")
 
 
-# 🎤 Audio Settings
-MIC_DEVICE = "plughw:3,0"
-
-CHUNK_DURATION = 1
-
-START_THRESHOLD = 0.07
-SILENCE_THRESHOLD = 0.03
-
-SILENCE_LIMIT = 2
-MIN_AUDIO_LENGTH = 1.2
-
-
+# =========================
+# CLEAN SHUTDOWN
+# =========================
 current_proc = None
 
-
-# 🛑 Clean shutdown
 def signal_handler(sig, frame):
-
     global current_proc
-
     print("\n🛑 Shutting down Ezra...")
-
     if current_proc:
         try:
             current_proc.terminate()
         except:
             pass
-
     sys.exit(0)
-
 
 signal.signal(signal.SIGINT, signal_handler)
 
 
-# 🎤 Record chunk
+# =========================
+# RECORD AUDIO (RAW - FIXED)
+# =========================
 def record_chunk():
 
-    global current_proc
+    bytes_per_sample = 2  # S16_LE
+    sample_rate = 16000
+    num_samples = int(CHUNK_DURATION * sample_rate)
+    expected_bytes = num_samples * bytes_per_sample
 
-    current_proc = subprocess.Popen(
+    proc = subprocess.Popen(
         [
             "arecord",
             "-D", MIC_DEVICE,
             "-f", "S16_LE",
             "-r", "16000",
-            "-d", str(CHUNK_DURATION),
-            "chunk.wav"
+            "-c", "1",
+            "-t", "raw"
         ],
-        stdout=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL
     )
 
-    current_proc.wait()
-    current_proc = None
+    # 🔥 Read exactly the amount we need
+    raw_audio = proc.stdout.read(expected_bytes)
 
+    proc.terminate()
 
-# 📥 Read audio safely
-def get_audio():
-
-    try:
-        fs, audio = wav.read("chunk.wav")
-
-    except Exception:
-        print("⚠️ Bad audio chunk")
+    if not raw_audio:
         return None
 
-    if audio.dtype == np.int16:
-        audio = audio.astype(np.float32) / 32768.0
+    audio = np.frombuffer(raw_audio, dtype=np.int16)
 
-    if len(audio.shape) > 1:
-        audio = np.mean(audio, axis=1)
+    # Normalize
+    audio = audio.astype(np.float32) / 32768.0
 
     # Remove DC offset
     audio = audio - np.mean(audio)
 
+    # Apply gain
+    audio = audio * GAIN
+    audio = np.clip(audio, -1.0, 1.0)
+
+    return audio
+
+    proc = subprocess.Popen(
+        [
+            "arecord",
+            "-D", MIC_DEVICE,
+            "-f", "S16_LE",
+            "-r", "16000",
+            "-c", "1",
+            "-d", str(CHUNK_DURATION),
+            "-t", "raw"   # 🔥 KEY FIX: no WAV header
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL
+    )
+
+    raw_audio, _ = proc.communicate()
+
+    # Convert bytes → numpy
+    audio = np.frombuffer(raw_audio, dtype=np.int16)
+
+    if len(audio) == 0:
+        return None
+
+    # Normalize
+    audio = audio.astype(np.float32) / 32768.0
+
+    # Remove DC offset
+    audio = audio - np.mean(audio)
+
+    # Apply gain
+    audio = audio * GAIN
+    audio = np.clip(audio, -1.0, 1.0)
+
     return audio
 
 
-# 🎤 Listen for speech
+# =========================
+# LISTEN LOOP
+# =========================
 def listen():
+
+    print("🔇 Calibrating noise floor...")
+
+    noise_samples = []
+
+    for _ in range(10):
+        audio = record_chunk()
+        if audio is None:
+            continue
+        rms = np.sqrt(np.mean(audio**2))
+        rms = min(rms, 0.3)  # clamp crazy spikes
+        print(f"Level: {rms:.3f}")
+        noise_samples.append(rms)
+
+    noise_floor = np.mean(noise_samples)
+
+    START_THRESHOLD = noise_floor + 0.025
+    SILENCE_THRESHOLD = noise_floor + 0.005
+
+    print(f"Noise floor: {noise_floor:.3f}")
+    print(f"Start threshold: {START_THRESHOLD:.3f}")
+    print(f"Silence threshold: {SILENCE_THRESHOLD:.3f}")
 
     print("🎤 Listening...")
 
@@ -139,58 +201,68 @@ def listen():
 
     while True:
 
-        record_chunk()
-
-        audio = get_audio()
+        audio = record_chunk()
 
         if audio is None:
             continue
-
+        print(f"Samples: {len(audio)}")
+        
         rms = np.sqrt(np.mean(audio**2))
-
         print(f"Level: {rms:.3f}")
 
-        # Speech start
-        if not speaking and rms > START_THRESHOLD:
+        # Start speaking
+        if not speaking:
+            if rms > START_THRESHOLD:
+                speech_chunks += 1
+            else:
+                speech_chunks = 0
+
+            if speech_chunks >= 2:
+                speaking = True
+                print("🟢 Speech detected")
+                recording.extend(audio)
 
             speaking = True
             print("🟢 Speech detected")
+            recording.extend(audio)
 
         if speaking:
-
+            speech_chunks = 0
             recording.extend(audio)
             speech_chunks += 1
 
-            # Silence detection
-            if rms < SILENCE_THRESHOLD:
+            if rms < (noise_floor + 0.008):
                 silence_counter += 1
             else:
                 silence_counter = 0
 
-            # Stop recording
-            if silence_counter >= SILENCE_LIMIT and speech_chunks > 3:
+            if speech_chunks > 2:
+                if silence_counter >= SILENCE_LIMIT or rms < (noise_floor + 0.005):
+                    print("🔴 End of speech")
+                    break
 
-                print("🔴 End of speech")
-                break
-
-    # Ignore too-short clips
+    # Ignore short clips
     if len(recording) < 16000 * MIN_AUDIO_LENGTH:
-
         print("⚠️ Too short, ignoring")
         return None
 
     return np.array(recording)
 
 
-# 🧠 Transcribe
+# =========================
+# TRANSCRIBE
+# =========================
 def transcribe(audio):
 
     print("🧠 Transcribing...")
 
+    # 🔥 Normalize audio (boost quiet speech)
+    audio = audio / max(0.01, np.max(np.abs(audio)))
+
+    import scipy.io.wavfile as wav
     wav.write("temp.wav", 16000, audio)
 
     with suppress_stderr_fully():
-
         segments, _ = model.transcribe(
             "temp.wav",
             language="en",
@@ -205,7 +277,9 @@ def transcribe(audio):
     return text
 
 
-# 🔊 Piper speech
+# =========================
+# SPEAK
+# =========================
 def speak(text):
 
     print(f"Ezra: {text}")
@@ -220,17 +294,29 @@ def speak(text):
 
     os.system(cmd)
 
+    # Talking animation ON
+    set_emotion("normal_talking")
+    time.sleep(0.05)
+
+    # Play audio
     os.system(
-        "aplay -D plughw:2,0 temp.wav > /dev/null 2>&1"
+        f"aplay -D {SPEAKER_DEVICE} temp.wav > /dev/null 2>&1"
     )
 
+    # Back to listening
+    set_emotion("listening")
 
-# 🔁 Main loop
+
+# =========================
+# MAIN LOOP
+# =========================
 def main():
 
     print("🤖 Ezra ready! (Ctrl+C to exit)\n")
 
     while True:
+
+        set_emotion("listening")
 
         audio = listen()
 
@@ -243,23 +329,17 @@ def main():
             continue
 
         if "quit" in text.lower():
-
             speak("Goodbye!")
             break
 
-        # 🧠 Ask brain
         result = ask_ezra(text)
-
-        emotion = result["emotion"]
         response = result["response"]
 
-        # 👀 Trigger emotion
-        set_emotion(emotion)
-
-        # 🔊 Speak
         speak(response)
 
 
-# ▶️ Start
+# =========================
+# START
+# =========================
 if __name__ == "__main__":
     main()

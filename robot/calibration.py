@@ -330,3 +330,6 @@ def calibrate():
 
         servos.set_servo_angle(ch, angle)
         time.sleep(0.02)
+
+if __name__ == "__main__":
+    calibrate()

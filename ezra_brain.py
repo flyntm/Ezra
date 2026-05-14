@@ -1,10 +1,19 @@
-from openai import OpenAI
+from pathlib import Path
 from dotenv import load_dotenv
+import os
 import json
+from openai import OpenAI
 
-load_dotenv()
+# Load env once
+load_dotenv(Path(__file__).parent / ".env", override=True)
 
-client = OpenAI()
+api_key = os.getenv("OPENAI_API_KEY")
+
+if not api_key:
+    raise RuntimeError("OPENAI_API_KEY not loaded")
+
+client = OpenAI(api_key=api_key)
+
 
 SYSTEM_PROMPT = """
 You are Ezra, a warm conversational robot assistant.
@@ -31,7 +40,6 @@ excited
 """
 
 conversation_history = []
-
 MAX_HISTORY = 12
 
 
@@ -39,22 +47,13 @@ def ask_ezra(user_text):
 
     global conversation_history
 
-    conversation_history.append({
-        "role": "user",
-        "content": user_text
-    })
+    conversation_history.append({"role": "user", "content": user_text})
 
-    # Limit history size
     conversation_history = conversation_history[-MAX_HISTORY:]
 
     response = client.responses.create(
         model="gpt-4.1-mini",
-        input=[
-            {
-                "role": "system",
-                "content": SYSTEM_PROMPT
-            }
-        ] + conversation_history
+        input=[{"role": "system", "content": SYSTEM_PROMPT}] + conversation_history,
     )
 
     text = response.output_text.strip()
@@ -63,17 +62,9 @@ def ask_ezra(user_text):
 
     try:
         data = json.loads(text)
-
     except Exception:
+        data = {"emotion": "neutral", "response": text}
 
-        data = {
-            "emotion": "neutral",
-            "response": text
-        }
-
-    conversation_history.append({
-        "role": "assistant",
-        "content": data["response"]
-    })
+    conversation_history.append({"role": "assistant", "content": data["response"]})
 
     return data
