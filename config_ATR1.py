@@ -1,14 +1,14 @@
 # =========================================
 # AUTO-GENERATED CONFIG
-# Mic: TKGOU
-# Date: 2026-05-18 10:20:42.760951
+# Mic: ATR4697
+# Date: 2026-05-16 15:13:33.601997
 # =========================================
 
 # Measured:
-# noise_floor = 0.016
-# speech_avg  = 0.313
-# speech_peak = 1.008
-# SNR         = 0.298
+# noise_floor = 0.006
+# speech_avg  = 0.039
+# speech_peak = 0.447
+# SNR         = 0.033
 
 # =========================
 # AUDIO DEVICES
@@ -32,7 +32,7 @@ SAMPLE_RATE = 16000
 CHUNK_DURATION = 0.25
 
 # Gain applied to microphone signal
-GAIN = 2.00
+GAIN = 5.17
 
 # Bytes per sample (2 = 16-bit audio)
 BYTES_PER_SAMPLE = 2
@@ -52,13 +52,13 @@ RMS_CLAMP = 0.6
 # =========================
 
 # Threshold above noise floor to START speech
-START_THRESHOLD_OFFSET = 0.035
+START_THRESHOLD_OFFSET = 0.010
 
 # Threshold above noise floor to detect SILENCE
-SILENCE_THRESHOLD_OFFSET = 0.054
+SILENCE_THRESHOLD_OFFSET = 0.006
 
 # Number of silent chunks before stopping recording
-SILENCE_LIMIT = 5
+SILENCE_LIMIT = 3
 
 # Minimum audio length (seconds)
 MIN_AUDIO_LENGTH = 1.0
@@ -80,7 +80,7 @@ START_CHUNKS_REQUIRED = 2
 # =========================
 
 # Number of chunks saved before speech detection
-PRE_BUFFER_SIZE = 5
+PRE_BUFFER_SIZE = 0
 
 
 # =========================

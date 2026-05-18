@@ -12,7 +12,6 @@ from robot import servos
 from robot import testmode
 from robot.constants import CH_LID_LEFT, CH_LID_RIGHT
 
-
 AVAILABLE_EMOTIONS = (
     "normal_talking",
     "listening",
@@ -22,6 +21,7 @@ AVAILABLE_EMOTIONS = (
     "confused",
     "exasperated",
     "thinking",
+    "wake",
 )
 
 EMOTION_ALIASES = {
@@ -181,6 +181,8 @@ class RobotEmotionController:
                 self._tick_exasperated(now, t)
             elif emotion == "thinking":
                 self._tick_thinking(now, t)
+            elif emotion == "wake":
+                pass  # 👈 HOLD the pose, no animation
 
     def _run_loop(self):
         while True:
@@ -224,6 +226,10 @@ class RobotEmotionController:
             self._set_lids(0.90)
             eyes.gaze_smooth(90, 70, steps=14, duration=0.18)
             self._mouth_left_side((110, 85, 0), count=2)
+        elif emotion == "wake":
+            eyes.center()
+            self._set_lids(1.0)
+            self._mouth_left_side((150, 150, 150), count=1)
 
     def _tick_normal_talking(self, now, t):
         h = 90 + 7 * math.sin(t * 0.55)
@@ -236,7 +242,7 @@ class RobotEmotionController:
         h = 90 + 4 * math.sin(t * 0.35)
         v = 86 + 2 * math.sin(t * 0.45)
         eyes.gaze(h, v)
-        self._set_lids(1.0)
+        pass
         self._maybe_blink(now)
         self._clear_mouth()
 
@@ -248,7 +254,9 @@ class RobotEmotionController:
         self._maybe_blink(now, every=(9.0, 16.0))
         if now >= self._next_mouth_frame:
             level = random.randint(90, 180)
-            self._mouth_color((level, max(0, level - 40), 0), width=random.randint(5, 8))
+            self._mouth_color(
+                (level, max(0, level - 40), 0), width=random.randint(5, 8)
+            )
             self._next_mouth_frame = now + 0.12
 
     def _tick_sad(self, now, t):
@@ -298,19 +306,22 @@ class RobotEmotionController:
         self._maybe_blink(now, every=(10.0, 18.0))
         self._mouth_left_side((110, 85, 0), count=2)
 
-    def _maybe_blink(self, now, every=(6.0, 12.0), closed_seconds=0.16):
-        if self._last_blink_at == 0.0:
-            self._last_blink_at = now
+    def _maybe_blink(self, *args, **kwargs):
+        return
 
-        if now - self._last_blink_at < self._next_blink_after:
-            return
+    # def _maybe_blink(self, now, every=(6.0, 12.0), closed_seconds=0.16):
+    #     if self._last_blink_at == 0.0:
+    #         self._last_blink_at = now
 
-        eyelids.close_lids()
-        time.sleep(closed_seconds)
-        with self._lock:
-            self._restore_lids_after_blink_locked(self._emotion)
-        self._last_blink_at = time.time()
-        self._next_blink_after = random.uniform(*every)
+    #     if now - self._last_blink_at < self._next_blink_after:
+    #         return
+
+    #     eyelids.close_lids()
+    #     time.sleep(closed_seconds)
+    #     with self._lock:
+    #         self._restore_lids_after_blink_locked(self._emotion)
+    #     self._last_blink_at = time.time()
+    #     self._next_blink_after = random.uniform(*every)
 
     def _restore_lids_after_blink_locked(self, emotion):
         if emotion in ("normal_talking", "listening"):
@@ -340,15 +351,23 @@ class RobotEmotionController:
                 return low + ((high - low) * open_amount)
             return high + ((wide - high) * (open_amount - 1.0) / 0.2)
 
-        servos.set_servo_angle(CH_LID_LEFT, angle_for("lid_l"))
-        servos.set_servo_angle(CH_LID_RIGHT, angle_for("lid_r"))
+        def set_if_changed(channel, new_angle, key):
+            last = getattr(self, f"_last_{key}", None)
+            if last is None or abs(last - new_angle) > 1.0:
+                servos.set_servo_angle(channel, new_angle)
+                setattr(self, f"_last_{key}", new_angle)
+
+        set_if_changed(CH_LID_LEFT, angle_for("lid_l"), "lid_l")
+        set_if_changed(CH_LID_RIGHT, angle_for("lid_r"), "lid_r")
 
     def _gaze_independent(self, left_h, left_v, right_h, right_v):
         left_targets = eyes._gaze_targets(left_h, left_v)
         right_targets = eyes._gaze_targets(right_h, right_v)
         eyes.look(left_targets[0], left_targets[1], right_targets[2], right_targets[3])
 
-    def _gaze_independent_smooth(self, left_h, left_v, right_h, right_v, steps=12, duration=0.12):
+    def _gaze_independent_smooth(
+        self, left_h, left_v, right_h, right_v, steps=12, duration=0.12
+    ):
         left_targets = eyes._gaze_targets(left_h, left_v)
         right_targets = eyes._gaze_targets(right_h, right_v)
         eyes.look_smooth(
@@ -377,7 +396,9 @@ class RobotEmotionController:
             distance = abs(i - center)
             if distance <= width / 2:
                 falloff = 1.0 - (distance / max(1.0, width))
-                testmode.pixels[i] = tuple(int(component * falloff) for component in color)
+                testmode.pixels[i] = tuple(
+                    int(component * falloff) for component in color
+                )
 
         testmode.pixels_show()
         self._mouth_is_lit = True

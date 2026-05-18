@@ -1,24 +1,38 @@
-import os
+import subprocess
 import time
 from config import *
 from ezra_emotion import set_emotion
+import state
+
 
 def speak(text):
+    if state.shutting_down:
+        return
+
     print(f"Ezra: {text}")
 
+    # Generate speech using Piper
     cmd = (
         f'echo "{text}" | '
-        f'~/projects/piper_tts/piper '
-        f'--model ~/projects/piper_tts/en_US-lessac-medium.onnx '
-        f'--output_file temp.wav '
-        f'> /dev/null 2>&1'
+        f"{PIPER_PATH} "
+        f"--model {TTS_MODEL_PATH} "
+        f"--output_file temp.wav"
     )
 
-    os.system(cmd)
+    subprocess.run(
+        cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
 
-    set_emotion("normal_talking")
-    time.sleep(0.05)
+    # Talking animation
+    set_emotion(EMOTION_TALKING)
+    time.sleep(TTS_START_DELAY)
 
-    os.system(f"aplay -D {SPEAKER_DEVICE} temp.wav > /dev/null 2>&1")
+    # Play audio
+    subprocess.run(
+        ["aplay", "-D", SPEAKER_DEVICE, "temp.wav"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
-    set_emotion("listening")
+    # Return to listening
+    set_emotion(EMOTION_LISTENING)

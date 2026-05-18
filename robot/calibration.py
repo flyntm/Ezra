@@ -8,24 +8,28 @@ import tty
 from robot import servos
 from robot.constants import *
 
-CAL_FILE = "calibration.txt"
-JSON_CAL_FILE = "calibration.json"
+import os
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CAL_FILE = os.path.join(BASE_DIR, "calibration.txt")
+JSON_CAL_FILE = os.path.join(BASE_DIR, "calibration.json")
+
 
 DEFAULT_CAL = {
     "servos": {
-        "left_h":  {"center": 90, "low": 60, "high": 120},
-        "left_v":  {"center": 90, "low": 60, "high": 120},
+        "left_h": {"center": 90, "low": 60, "high": 120},
+        "left_v": {"center": 90, "low": 60, "high": 120},
         "right_h": {"center": 90, "low": 60, "high": 120},
         "right_v": {"center": 90, "low": 60, "high": 120},
-        "lid_l":   {"center": 100, "low": 20, "high": 140, "wide_open": 140},
-        "lid_r":   {"center": 100, "low": 20, "high": 140, "wide_open": 140}
+        "lid_l": {"center": 100, "low": 20, "high": 140, "wide_open": 140},
+        "lid_r": {"center": 100, "low": 20, "high": 140, "wide_open": 140},
     },
     "gaze": {
-        "left_h":  {"left": 60, "center": 90, "right": 120},
+        "left_h": {"left": 60, "center": 90, "right": 120},
         "right_h": {"left": 60, "center": 90, "right": 120},
-        "left_v":  {"up": 60, "center": 90, "down": 120},
-        "right_v": {"up": 60, "center": 90, "down": 120}
-    }
+        "left_v": {"up": 60, "center": 90, "down": 120},
+        "right_v": {"up": 60, "center": 90, "down": 120},
+    },
 }
 
 SERVO_CHANNELS = {
@@ -44,8 +48,10 @@ EYE_GAZE_LABELS = {
     "right_v": ("up", "down"),
 }
 
+
 def _copy_default_cal():
     return json.loads(json.dumps(DEFAULT_CAL))
+
 
 def _sync_servo_limits(cal, key):
     values = [cal["servos"][key]["center"]]
@@ -56,6 +62,7 @@ def _sync_servo_limits(cal, key):
 
     cal["servos"][key]["low"] = min(values)
     cal["servos"][key]["high"] = max(values)
+
 
 def _normalize_cal(cal):
     merged = _copy_default_cal()
@@ -80,6 +87,7 @@ def _normalize_cal(cal):
 
     return merged
 
+
 def _load_txt_cal():
     values = {}
 
@@ -102,35 +110,66 @@ def _load_txt_cal():
     cal = _copy_default_cal()
 
     for key, channel in SERVO_CHANNELS.items():
-        cal["servos"][key]["center"] = value(channel, "center", cal["servos"][key]["center"])
+        cal["servos"][key]["center"] = value(
+            channel, "center", cal["servos"][key]["center"]
+        )
 
-    cal["gaze"]["left_h"]["left"] = value(CH_EYE_LEFT_H, "left", cal["gaze"]["left_h"]["left"])
+    cal["gaze"]["left_h"]["left"] = value(
+        CH_EYE_LEFT_H, "left", cal["gaze"]["left_h"]["left"]
+    )
     cal["gaze"]["left_h"]["center"] = cal["servos"]["left_h"]["center"]
-    cal["gaze"]["left_h"]["right"] = value(CH_EYE_LEFT_H, "right", cal["gaze"]["left_h"]["right"])
+    cal["gaze"]["left_h"]["right"] = value(
+        CH_EYE_LEFT_H, "right", cal["gaze"]["left_h"]["right"]
+    )
 
-    cal["gaze"]["right_h"]["left"] = value(CH_EYE_RIGHT_H, "left", cal["gaze"]["right_h"]["left"])
+    cal["gaze"]["right_h"]["left"] = value(
+        CH_EYE_RIGHT_H, "left", cal["gaze"]["right_h"]["left"]
+    )
     cal["gaze"]["right_h"]["center"] = cal["servos"]["right_h"]["center"]
-    cal["gaze"]["right_h"]["right"] = value(CH_EYE_RIGHT_H, "right", cal["gaze"]["right_h"]["right"])
+    cal["gaze"]["right_h"]["right"] = value(
+        CH_EYE_RIGHT_H, "right", cal["gaze"]["right_h"]["right"]
+    )
 
-    cal["gaze"]["left_v"]["up"] = value(CH_EYE_LEFT_V, "up", cal["gaze"]["left_v"]["up"])
+    cal["gaze"]["left_v"]["up"] = value(
+        CH_EYE_LEFT_V, "up", cal["gaze"]["left_v"]["up"]
+    )
     cal["gaze"]["left_v"]["center"] = cal["servos"]["left_v"]["center"]
-    cal["gaze"]["left_v"]["down"] = value(CH_EYE_LEFT_V, "down", cal["gaze"]["left_v"]["down"])
+    cal["gaze"]["left_v"]["down"] = value(
+        CH_EYE_LEFT_V, "down", cal["gaze"]["left_v"]["down"]
+    )
 
-    cal["gaze"]["right_v"]["up"] = value(CH_EYE_RIGHT_V, "up", cal["gaze"]["right_v"]["up"])
+    cal["gaze"]["right_v"]["up"] = value(
+        CH_EYE_RIGHT_V, "up", cal["gaze"]["right_v"]["up"]
+    )
     cal["gaze"]["right_v"]["center"] = cal["servos"]["right_v"]["center"]
-    cal["gaze"]["right_v"]["down"] = value(CH_EYE_RIGHT_V, "down", cal["gaze"]["right_v"]["down"])
+    cal["gaze"]["right_v"]["down"] = value(
+        CH_EYE_RIGHT_V, "down", cal["gaze"]["right_v"]["down"]
+    )
 
-    cal["servos"]["lid_l"]["high"] = value(CH_LID_LEFT, "open", cal["servos"]["lid_l"]["high"])
-    cal["servos"]["lid_l"]["wide_open"] = value(CH_LID_LEFT, "wide_open", cal["servos"]["lid_l"]["high"])
-    cal["servos"]["lid_l"]["low"] = value(CH_LID_LEFT, "closed", cal["servos"]["lid_l"]["low"])
-    cal["servos"]["lid_r"]["high"] = value(CH_LID_RIGHT, "open", cal["servos"]["lid_r"]["high"])
-    cal["servos"]["lid_r"]["wide_open"] = value(CH_LID_RIGHT, "wide_open", cal["servos"]["lid_r"]["high"])
-    cal["servos"]["lid_r"]["low"] = value(CH_LID_RIGHT, "closed", cal["servos"]["lid_r"]["low"])
+    cal["servos"]["lid_l"]["high"] = value(
+        CH_LID_LEFT, "open", cal["servos"]["lid_l"]["high"]
+    )
+    cal["servos"]["lid_l"]["wide_open"] = value(
+        CH_LID_LEFT, "wide_open", cal["servos"]["lid_l"]["high"]
+    )
+    cal["servos"]["lid_l"]["low"] = value(
+        CH_LID_LEFT, "closed", cal["servos"]["lid_l"]["low"]
+    )
+    cal["servos"]["lid_r"]["high"] = value(
+        CH_LID_RIGHT, "open", cal["servos"]["lid_r"]["high"]
+    )
+    cal["servos"]["lid_r"]["wide_open"] = value(
+        CH_LID_RIGHT, "wide_open", cal["servos"]["lid_r"]["high"]
+    )
+    cal["servos"]["lid_r"]["low"] = value(
+        CH_LID_RIGHT, "closed", cal["servos"]["lid_r"]["low"]
+    )
 
     for key in EYE_GAZE_LABELS:
         _sync_servo_limits(cal, key)
 
     return cal
+
 
 def _load_json_cal():
     try:
@@ -138,6 +177,7 @@ def _load_json_cal():
             return _normalize_cal(json.load(f))
     except:
         return None
+
 
 def load_cal():
     txt_cal = _load_txt_cal()
@@ -149,6 +189,7 @@ def load_cal():
         return json_cal
 
     return _copy_default_cal()
+
 
 def save_cal(cal):
     with open(CAL_FILE, "w") as f:
@@ -168,10 +209,12 @@ def save_cal(cal):
 
     print("\nSaved calibration.txt")
 
+
 def _ensure_servos_initialized():
     if servos.pca is not None:
         return True
     return servos.init()
+
 
 def _move_all_servos_to_centers(cal):
     angles = {}
@@ -184,6 +227,7 @@ def _move_all_servos_to_centers(cal):
 
     return angles
 
+
 def center_all_servos_natural():
     """Move all servos to their built-in neutral centers, ignoring saved calibration."""
     if not _ensure_servos_initialized():
@@ -191,12 +235,14 @@ def center_all_servos_natural():
 
     return _move_all_servos_to_centers(_copy_default_cal())
 
+
 def center_all_servos_from_calibration():
     """Reload calibration from disk and move all servos to the saved center positions."""
     if not _ensure_servos_initialized():
         return None
 
     return _move_all_servos_to_centers(load_cal())
+
 
 def get_key():
     fd = sys.stdin.fileno()
@@ -210,17 +256,18 @@ def get_key():
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
+
 def calibrate():
     cal = load_cal()
     servos.init()
 
     servolist = [
-        ("Left Eye Horizontal",  CH_EYE_LEFT_H,  "left_h"),
-        ("Left Eye Vertical",    CH_EYE_LEFT_V,  "left_v"),
+        ("Left Eye Horizontal", CH_EYE_LEFT_H, "left_h"),
+        ("Left Eye Vertical", CH_EYE_LEFT_V, "left_v"),
         ("Right Eye Horizontal", CH_EYE_RIGHT_H, "right_h"),
-        ("Right Eye Vertical",   CH_EYE_RIGHT_V, "right_v"),
-        ("Left Eyelid",          CH_LID_LEFT,    "lid_l"),
-        ("Right Eyelid",         CH_LID_RIGHT,   "lid_r")
+        ("Right Eye Vertical", CH_EYE_RIGHT_V, "right_v"),
+        ("Left Eyelid", CH_LID_LEFT, "lid_l"),
+        ("Right Eyelid", CH_LID_RIGHT, "lid_r"),
     ]
 
     angles = {key: cal["servos"][key]["center"] for _, _, key in servolist}
@@ -330,6 +377,7 @@ def calibrate():
 
         servos.set_servo_angle(ch, angle)
         time.sleep(0.02)
+
 
 if __name__ == "__main__":
     calibrate()

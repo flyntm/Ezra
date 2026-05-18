@@ -1,5 +1,6 @@
 import subprocess
 import numpy as np
+from collections import deque
 from config import *
 
 # =========================
@@ -15,10 +16,8 @@ current_proc = None
 def record_chunk():
     global current_proc
 
-    bytes_per_sample = 2
-    sample_rate = 16000
-    num_samples = int(CHUNK_DURATION * sample_rate)
-    expected_bytes = num_samples * bytes_per_sample
+    num_samples = int(CHUNK_DURATION * SAMPLE_RATE)
+    expected_bytes = num_samples * BYTES_PER_SAMPLE
 
     current_proc = subprocess.Popen(
         [
@@ -26,11 +25,11 @@ def record_chunk():
             "-D",
             MIC_DEVICE,
             "-f",
-            "S16_LE",
+            AUDIO_FORMAT,
             "-r",
-            "16000",
+            str(SAMPLE_RATE),
             "-c",
-            "1",
+            str(CHANNELS),
             "-t",
             "raw",
         ],
@@ -42,6 +41,7 @@ def record_chunk():
         raw_audio = current_proc.stdout.read(expected_bytes)
     finally:
         current_proc.terminate()
+        current_proc.wait()
         current_proc = None
 
     if not raw_audio:
@@ -55,7 +55,6 @@ def record_chunk():
 
     # Apply gain
     audio = audio * GAIN
-    audio = np.clip(audio, -1.0, 1.0)
 
     return audio
 
@@ -77,32 +76,35 @@ def listen():
             if audio is None:
                 continue
 
-            rms = np.sqrt(np.mean(audio**2))
-            rms = min(rms, 0.3)
+            rms_raw = np.sqrt(np.mean(audio**2))
+            rms = 0.7 * rms_raw + 0.3 * getattr(listen, "last_rms", rms_raw)
+            listen.last_rms = rms
+            rms = min(rms, RMS_CLAMP)
             print(f"Level: {rms:.3f}")
-            noise_samples.append(rms)
 
-        noise_floor = np.mean(noise_samples)
+            if rms < 0.10:  # ignore spikes
+                noise_samples.append(rms)
+
+        noise_floor = np.percentile(noise_samples, 30)
         noise_floor_cached = noise_floor
 
-        # 👇 DEFINE FIRST
-        start_threshold = noise_floor + 0.025
-        silence_threshold = noise_floor + 0.012
-
-        # 👇 THEN PRINT
         print(f"Noise floor: {noise_floor:.3f}")
-        print(f"Start threshold: {start_threshold:.3f}")
-        print(f"Silence threshold: {silence_threshold:.3f}")
     else:
         noise_floor = noise_floor_cached
 
-    start_threshold = noise_floor + 0.025
-    silence_threshold = noise_floor + 0.012
+    # Thresholds
+    start_threshold = noise_floor + START_THRESHOLD_OFFSET
+    silence_threshold = noise_floor + SILENCE_THRESHOLD_OFFSET
+
+    # =========================
+    # RING BUFFER (KEY CHANGE)
+    # =========================
+    ring_seconds = 1.5
+    ring_size = int(ring_seconds / CHUNK_DURATION)
+    ring_buffer = deque(maxlen=ring_size)
 
     # === INIT ===
     recording = []
-    pre_buffer = []
-    PRE_BUFFER_SIZE = 3
 
     speaking = False
     silence_counter = 0
@@ -114,18 +116,14 @@ def listen():
     # === MAIN LOOP ===
     while True:
         audio = record_chunk()
-
-        # Save pre-buffer
-        if audio is not None and len(audio) > 0:
-            pre_buffer.append(audio)
-        if len(pre_buffer) > PRE_BUFFER_SIZE:
-            pre_buffer.pop(0)
-
         if audio is None:
             continue
 
+        # Always store audio
+        ring_buffer.append(audio)
+
         rms = np.sqrt(np.mean(audio**2))
-        rms = min(rms, 0.3)
+        rms = min(rms, RMS_CLAMP)
 
         print(f"Level: {rms:.3f}")
 
@@ -136,14 +134,14 @@ def listen():
             else:
                 start_counter = 0
 
-            if start_counter >= 2:
+            if start_counter >= START_CHUNKS_REQUIRED:
                 speaking = True
                 print("🟢 Speech detected")
 
-                # Add buffered audio (capture first syllable)
-                valid = [a for a in pre_buffer if a is not None and len(a) > 0]
-                if valid:
-                    recording.extend(np.concatenate(valid))
+                # 🔥 prepend buffered audio
+                if len(ring_buffer) > 0:
+                    buffered = np.concatenate(list(ring_buffer))
+                    recording.extend(buffered)
 
                 recording.extend(audio)
 
@@ -159,14 +157,14 @@ def listen():
             if rms < silence_threshold:
                 silence_counter += 1
             else:
-                silence_counter = max(0, silence_counter - 1)
+                silence_counter = max(0, silence_counter - SILENCE_DECAY)
 
             if silence_counter >= SILENCE_LIMIT and speech_chunks > 4:
                 print("🔴 End of speech")
                 break
 
     # === FINAL CHECK ===
-    if len(recording) < 16000 * MIN_AUDIO_LENGTH:
+    if len(recording) < SAMPLE_RATE * MIN_AUDIO_LENGTH:
         print("⚠️ Too short, ignoring")
         return None
 

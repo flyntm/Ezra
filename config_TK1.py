@@ -52,13 +52,13 @@ RMS_CLAMP = 0.6
 # =========================
 
 # Threshold above noise floor to START speech
-START_THRESHOLD_OFFSET = 0.035
+START_THRESHOLD_OFFSET = 0.089
 
 # Threshold above noise floor to detect SILENCE
 SILENCE_THRESHOLD_OFFSET = 0.054
 
 # Number of silent chunks before stopping recording
-SILENCE_LIMIT = 5
+SILENCE_LIMIT = 3
 
 # Minimum audio length (seconds)
 MIN_AUDIO_LENGTH = 1.0
@@ -80,7 +80,7 @@ START_CHUNKS_REQUIRED = 2
 # =========================
 
 # Number of chunks saved before speech detection
-PRE_BUFFER_SIZE = 5
+PRE_BUFFER_SIZE = 0
 
 
 # =========================
