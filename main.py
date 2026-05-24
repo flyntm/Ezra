@@ -6,25 +6,6 @@ from ezra_emotion import set_emotion
 from config import *
 from wake_word import wait_for_wake_word
 import state
-import string
-import time
-
-WAKE_WORDS = ["ezra", "extra", "israel", "ezrah", "ez"]
-
-
-def strip_wake_word(text):
-    text = text.lower()
-
-    # remove punctuation
-    text = text.translate(str.maketrans("", "", string.punctuation))
-
-    words = text.split()
-
-    # remove ALL wake words from the beginning
-    while words and words[0] in WAKE_WORDS:
-        words.pop(0)
-
-    return " ".join(words).strip()
 
 
 def main():
@@ -32,73 +13,41 @@ def main():
 
     try:
         while True:
-            # =========================
-            # WAIT FOR WAKE WORD
-            # =========================
+            # 👂 Wait for wake word (returns full spoken phrase)
             text = wait_for_wake_word()
+            text_lower = text.lower()
 
-            # strip wake words
-            command = strip_wake_word(text)
+            # 🧹 Strip wake word
+            for w in ["ezra", "extra", "israel"]:
+                if w in text_lower:
+                    text = text_lower.replace(w, "").strip()
+                    break
 
-            # =========================
-            # HANDLE "JUST EZRA"
-            # =========================
-            if not command:
+            # 🎯 If user ONLY said "Ezra" → ask for command
+            if len(text.split()) <= 1:
                 print("👂 Listening for command...")
-                speak("Yes?")
+                speak("Yes?")  # optional but improves UX
 
-                # 🔥 TIMEOUT LISTEN (FIXED)
-                start_time = time.time()
-                timeout_seconds = 4
-
-                audio = None
-
-                while time.time() - start_time < timeout_seconds:
-                    audio = listen(timeout=4)
-                    if audio is not None:
-                        break
-
+                audio = listen()
                 if audio is None:
-                    print("⏱️ Timeout waiting for command")
                     continue
 
                 text = transcribe(audio)
                 if not text:
                     continue
 
-                command = strip_wake_word(text)
+                text_lower = text.lower()
 
-            else:
-                print(f"⚡ Direct command: {command}")
-
-            # =========================
-            # FILTER GARBAGE INPUT
-            # =========================
-            words = command.split()
-
-            if len(words) < 2:
-                print("⚠️ Ignoring short/unclear input")
-                speak("I didn't catch that.")
-                continue
-
-            text_lower = command.lower()
-
-            # =========================
-            # EMOTION: LISTENING
-            # =========================
+            # 🎭 Set listening emotion
             set_emotion(EMOTION_LISTENING)
 
-            # =========================
-            # QUIT HANDLING
-            # =========================
+            # 🚪 Quit handling
             if any(word in text_lower for word in QUIT_KEYWORDS):
                 speak(GOODBYE_TEXT)
                 break
 
-            # =========================
-            # ASK EZRA (GPT)
-            # =========================
-            result = ask_ezra(command)
+            # 🧠 Ask Ezra (GPT)
+            result = ask_ezra(text)
 
             response = result.get("response", "")
             emotion = result.get("emotion", "neutral")
@@ -106,9 +55,7 @@ def main():
             if not response:
                 response = "I'm not sure how to respond to that."
 
-            # =========================
-            # EMOTION MAPPING
-            # =========================
+            # 🎭 Map AI emotion → robot emotion
             EMOTION_MAP = {
                 "neutral": "listening",
                 "happy": "happy",

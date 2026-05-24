@@ -1,5 +1,4 @@
 import subprocess
-import time
 import numpy as np
 from collections import deque
 from config import *
@@ -7,7 +6,7 @@ from config import *
 # =========================
 # GLOBAL STATE
 # =========================
-# noise_floor_cached = None
+noise_floor_cached = None
 current_proc = None
 
 
@@ -55,7 +54,7 @@ def record_chunk():
     audio = audio - np.mean(audio)
 
     # Apply gain
-    audio = np.clip(audio * GAIN, -1.0, 1.0)
+    audio = audio * GAIN
 
     return audio
 
@@ -63,23 +62,48 @@ def record_chunk():
 # =========================
 # LISTEN FOR SPEECH
 # =========================
-def listen(timeout=None):
-    # =========================
-    # FIXED NOISE FLOOR (Anker mic)
-    # =========================
-    noise_floor = 0.01
+def listen():
+    global noise_floor_cached
+
+    # === CALIBRATION ===
+    if noise_floor_cached is None:
+        print("🔇 Calibrating noise floor...")
+
+        noise_samples = []
+
+        for _ in range(10):
+            audio = record_chunk()
+            if audio is None:
+                continue
+
+            rms_raw = np.sqrt(np.mean(audio**2))
+            rms = 0.7 * rms_raw + 0.3 * getattr(listen, "last_rms", rms_raw)
+            listen.last_rms = rms
+            rms = min(rms, RMS_CLAMP)
+            print(f"Level: {rms:.3f}")
+
+            if rms < 0.10:  # ignore spikes
+                noise_samples.append(rms)
+
+        noise_floor = np.percentile(noise_samples, 30)
+        noise_floor_cached = noise_floor
+
+        print(f"Noise floor: {noise_floor:.3f}")
+    else:
+        noise_floor = noise_floor_cached
 
     # Thresholds
-    start_threshold = max(noise_floor + START_THRESHOLD_OFFSET, 0.02)
-    silence_threshold = max(noise_floor + SILENCE_THRESHOLD_OFFSET, 0.02)
+    start_threshold = noise_floor + START_THRESHOLD_OFFSET
+    silence_threshold = noise_floor + SILENCE_THRESHOLD_OFFSET
 
     # =========================
-    # RING BUFFER
+    # RING BUFFER (KEY CHANGE)
     # =========================
-    ring_seconds = 0.8
+    ring_seconds = 1.5
     ring_size = int(ring_seconds / CHUNK_DURATION)
     ring_buffer = deque(maxlen=ring_size)
 
+    # === INIT ===
     recording = []
 
     speaking = False
@@ -89,26 +113,21 @@ def listen(timeout=None):
 
     print("🎤 Listening...")
 
-    start_time = time.time()
-
+    # === MAIN LOOP ===
     while True:
-        # 🔥 TIMEOUT CHECK (ADD THIS)
-        if timeout is not None and (time.time() - start_time > timeout):
-            print("⏱️ listen() timeout hit")
-            return None
-
         audio = record_chunk()
         if audio is None:
             continue
 
+        # Always store audio
         ring_buffer.append(audio)
 
         rms = np.sqrt(np.mean(audio**2))
         rms = min(rms, RMS_CLAMP)
 
-        # =========================
-        # START DETECTION
-        # =========================
+        print(f"Level: {rms:.3f}")
+
+        # === START DETECTION ===
         if not speaking:
             if rms > start_threshold:
                 start_counter += 1
@@ -117,9 +136,9 @@ def listen(timeout=None):
 
             if start_counter >= START_CHUNKS_REQUIRED:
                 speaking = True
-                print(f"🟢 Speech detected ({rms:.3f})")
+                print("🟢 Speech detected")
 
-                # prepend buffered audio
+                # 🔥 prepend buffered audio
                 if len(ring_buffer) > 0:
                     buffered = np.concatenate(list(ring_buffer))
                     recording.extend(buffered)
@@ -130,9 +149,7 @@ def listen(timeout=None):
                 speech_chunks = 0
                 start_counter = 0
 
-        # =========================
-        # SPEAKING MODE
-        # =========================
+        # === SPEAKING MODE ===
         else:
             recording.extend(audio)
             speech_chunks += 1
@@ -146,9 +163,7 @@ def listen(timeout=None):
                 print("🔴 End of speech")
                 break
 
-    # =========================
-    # FINAL CHECK
-    # =========================
+    # === FINAL CHECK ===
     if len(recording) < SAMPLE_RATE * MIN_AUDIO_LENGTH:
         print("⚠️ Too short, ignoring")
         return None

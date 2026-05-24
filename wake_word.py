@@ -1,5 +1,4 @@
 import time
-import string
 from audio import listen
 from stt import transcribe
 from ezra_emotion import set_emotion
@@ -8,26 +7,12 @@ from ezra_emotion import set_emotion
 WAKE_WORDS = ["ezra", "extra", "israel", "ezrah", "ez"]
 
 
-def clean_text(text):
-    """Lowercase and remove punctuation for reliable matching"""
-    text = text.lower()
-    text = text.translate(str.maketrans("", "", string.punctuation))
-    return text
-
-
-def contains_wake_word(text):
-    """Fuzzy wake detection (handles ezra, ezra's, etc.)"""
-    for w in WAKE_WORDS:
-        if w in text:
-            return True
-    return False
-
-
 def wait_for_wake_word():
     print("👂 Waiting for wake word...")
 
     while True:
         audio = listen()
+
         if audio is None:
             continue
 
@@ -36,23 +21,24 @@ def wait_for_wake_word():
             continue
 
         text_lower = text.lower()
-        cleaned = clean_text(text)
-
         print(f"(heard: {text_lower})")
-        words = cleaned.split()
+        words = text_lower.replace(",", "").replace(".", "").split()
         print(f"(words parsed: {words})")
 
-        # =========================
-        # 1. STRONG WAKE DETECTION
-        # =========================
-        if contains_wake_word(cleaned):
+        # 1. Normal wake word
+        if any(w in words[:2] for w in WAKE_WORDS):
             print("🟢 Wake word detected!")
             set_emotion("wake")
             time.sleep(0.25)
             return text
 
-        # =========================
-        # 2. IGNORE SINGLE-WORD NOISE
-        # =========================
+        # Skip single-word noise
         if len(words) == 1:
             continue
+
+        # 2. FALLBACK: only if it looks like a command (starts immediately)
+        if len(words) >= 2 and len(words) <= 6:
+            print("🟡 Wake assumed (no wake word detected)")
+            set_emotion("wake")
+            time.sleep(0.25)
+            return text

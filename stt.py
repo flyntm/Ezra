@@ -68,6 +68,11 @@ def transcribe(audio):
     if not text:
         return ""
 
+    # Reject obvious hallucination pattern
+    if len(text.split()) > 8:
+        print("⚠️ Ignoring long/invalid transcription")
+        return ""
+
     # Reject repeated nonsense
     if text.lower().count("ezra") > 3:
         print("⚠️ Ignoring hallucinated repetition")
