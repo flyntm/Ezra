@@ -1,15 +1,3 @@
-# =========================================
-# AUTO-GENERATED CONFIG
-# Mic: TKGOU
-# Date: 2026-05-18 10:20:42.760951
-# =========================================
-
-# Measured:
-# noise_floor = 0.016
-# speech_avg  = 0.313
-# speech_peak = 1.008
-# SNR         = 0.298
-
 # =========================
 # AUDIO DEVICES
 # =========================
@@ -72,7 +60,7 @@ SILENCE_DECAY = 1
 # =========================
 
 # Number of loud chunks required to confirm speech start
-START_CHUNKS_REQUIRED = 2
+START_CHUNKS_REQUIRED = 1
 
 
 # =========================
