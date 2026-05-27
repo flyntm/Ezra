@@ -1,3 +1,4 @@
+print("🔥 USING NEW STT FILE 🔥")
 from audio import listen
 from stt import transcribe
 from tts import speak
@@ -7,22 +8,21 @@ from config import *
 from wake_word import wait_for_wake_word
 import state
 import string
-import time
 
-WAKE_WORDS = ["ezra", "extra", "israel", "ezrah", "ez"]
+WAKE_WORDS = ["ezra", "extra", "israel", "ezrah", "ez", "you"]
 
 
 def strip_wake_word(text):
     text = text.lower()
-
-    # remove punctuation
     text = text.translate(str.maketrans("", "", string.punctuation))
 
     words = text.split()
 
-    # remove ALL wake words from the beginning
-    while words and words[0] in WAKE_WORDS:
+    # Remove wake word ANYWHERE in first 2 words
+    if words and words[0] in WAKE_WORDS:
         words.pop(0)
+    elif len(words) > 1 and words[1] in WAKE_WORDS:
+        words.pop(1)
 
     return " ".join(words).strip()
 
@@ -47,16 +47,7 @@ def main():
                 print("👂 Listening for command...")
                 speak("Yes?")
 
-                # 🔥 TIMEOUT LISTEN (FIXED)
-                start_time = time.time()
-                timeout_seconds = 4
-
-                audio = None
-
-                while time.time() - start_time < timeout_seconds:
-                    audio = listen(timeout=4)
-                    if audio is not None:
-                        break
+                audio = listen()
 
                 if audio is None:
                     print("⏱️ Timeout waiting for command")
@@ -74,9 +65,7 @@ def main():
             # =========================
             # FILTER GARBAGE INPUT
             # =========================
-            words = command.split()
-
-            if len(words) < 2:
+            if len(command.strip()) < 2:
                 print("⚠️ Ignoring short/unclear input")
                 speak("I didn't catch that.")
                 continue

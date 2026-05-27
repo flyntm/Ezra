@@ -1,13 +1,10 @@
 import contextlib
 import os
-import numpy as np
 from faster_whisper import WhisperModel
-from config import *
+import scipy.io.wavfile as wav
+import numpy as np
 
 
-# =========================
-# SUPPRESS STDERR
-# =========================
 @contextlib.contextmanager
 def suppress_stderr():
     devnull = os.open(os.devnull, os.O_WRONLY)
@@ -21,58 +18,55 @@ def suppress_stderr():
         os.close(old)
 
 
-# =========================
-# LOAD MODEL
-# =========================
 print("🧠 Loading Whisper model...")
 with suppress_stderr():
-    model = WhisperModel(
-        WHISPER_MODEL, device=WHISPER_DEVICE, compute_type=WHISPER_COMPUTE_TYPE
-    )
+    model = WhisperModel("small.en", device="cpu", compute_type="int8")
 print("✅ Model loaded")
 
 
-# =========================
-# TRANSCRIBE
-# =========================
 def transcribe(audio):
+    print("🧠 STT CALLED")
     print("🧠 Transcribing...")
 
-    # Normalize audio
-    audio = audio / (np.max(np.abs(audio)) + 1e-6)
-    audio = np.clip(audio, -1.0, 1.0)
+    # =========================
+    # NORMALIZE
+    # =========================
+    max_val = np.max(np.abs(audio))
+    if max_val > 0:
+        audio = audio / max_val
 
-    # Reject very low energy audio
-    rms = np.sqrt(np.mean(audio**2))
-    if rms < 0.02:
-        print("🔇 Ignoring low-energy audio")
-        return ""
+    # =========================
+    # GAIN BOOST (important)
+    # =========================
+    audio = np.clip(audio * 3.0, -1.0, 1.0)
 
-    # 🔥 ADD THIS (padding at the beginning)
-    pad = np.zeros(int(0.2 * SAMPLE_RATE))
-    audio = np.concatenate([pad, audio])
+    # =========================
+    # 🔥 TRIM AUDIO (CRITICAL FIX)
+    # =========================
+    max_samples = 16000 * 3  # 3 seconds max
+    audio = audio[-max_samples:]
 
+    # =========================
+    # WRITE TEMP FILE
+    # =========================
+    wav.write("temp.wav", 16000, audio)
+
+    # =========================
+    # TRANSCRIBE (FAST + SAFE)
+    # =========================
     with suppress_stderr():
         segments, _ = model.transcribe(
-            audio,
-            language=WHISPER_LANGUAGE,
-            beam_size=WHISPER_BEAM_SIZE,
-            temperature=0.0,
-            condition_on_previous_text=False,
-            initial_prompt="Ezra",
+            "temp.wav", language="en", beam_size=1, best_of=1
         )
 
+    # =========================
+    # BUILD TEXT
+    # =========================
     text = " ".join([seg.text for seg in segments]).strip()
 
-    # 🔥 FILTER OUT GARBAGE / HALLUCINATIONS
     if not text:
-        return ""
-
-    # Reject repeated nonsense
-    if text.lower().count("ezra") > 3:
-        print("⚠️ Ignoring hallucinated repetition")
+        print("⚠️ No speech recognized")
         return ""
 
     print(f"You said: {text}")
-
     return text
