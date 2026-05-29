@@ -1,1 +1,0 @@
-print("Ezra is alive")
