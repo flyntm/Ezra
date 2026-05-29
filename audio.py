@@ -69,7 +69,7 @@ def listen(timeout=None):
     # ENERGY CHECK
     # =========================
     rms = np.sqrt(np.mean(audio**2))
-    print(f"Level: {rms:.4f}")
+    print(f"Level: {rms:.4f}  Samples: {len(audio)}")
 
     # 🔥 FILTER OUT JUNK / FRAGMENTS
     if rms < 0.01:
@@ -82,5 +82,7 @@ def listen(timeout=None):
 
     if len(audio) > max_samples:
         audio = audio[-max_samples:]
+
+    print("💾 Saved recording to /tmp/ezra_record.wav")
 
     return audio

@@ -8,6 +8,7 @@ from config import *
 from wake_word import wait_for_wake_word
 import state
 import string
+import time
 
 WAKE_WORDS = ["ezra", "extra", "israel", "ezrah", "ez", "you"]
 
@@ -15,12 +16,21 @@ WAKE_WORDS = ["ezra", "extra", "israel", "ezrah", "ez", "you"]
 def strip_wake_word(text):
     text = text.lower()
     text = text.translate(str.maketrans("", "", string.punctuation))
+    text = text.strip()
+
+    # Handle wake phrases from OpenWakeWord
+    if text == "ezra":
+        return ""
+
+    if text == "hey ezra":
+        return ""
 
     words = text.split()
 
-    # Remove wake word ANYWHERE in first 2 words
+    # Old STT fallback logic
     if words and words[0] in WAKE_WORDS:
         words.pop(0)
+
     elif len(words) > 1 and words[1] in WAKE_WORDS:
         words.pop(1)
 
@@ -36,7 +46,7 @@ def main():
             # WAIT FOR WAKE WORD
             # =========================
             text = wait_for_wake_word()
-
+            print(f"DEBUG wake text: [{text}]")
             # strip wake words
             command = strip_wake_word(text)
 
@@ -45,8 +55,9 @@ def main():
             # =========================
             if not command:
                 print("👂 Listening for command...")
-                speak("Yes?")
 
+                speak("Yes?")
+                time.sleep(0.5)
                 audio = listen()
 
                 if audio is None:

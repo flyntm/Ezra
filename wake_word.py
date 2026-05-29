@@ -21,7 +21,7 @@ def handle_stop():
     return "ezra stop"
 
 
-THRESHOLD = 0.20
+THRESHOLD = 0.30
 STOP_THRESHOLD = 0.45
 
 COOLDOWN = 1.5
