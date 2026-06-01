@@ -1,16 +1,24 @@
 import subprocess
 import time
+import os
 import numpy as np
+import soundfile as sf
 
 MIC_DEVICE = "alsa_input.usb-Anker_PowerConf_A3321-DEV-SN1-01.mono-fallback"
 
 
 def listen(timeout=None):
+
     print("🎤 Listening...")
 
-    # =========================
-    # 🔥 MIC WARM-UP (stabilizes input)
-    # =========================
+    filename = "/home/flyntm/projects/ezra/ezra_record.wav"
+
+    duration = 6
+
+    # ---------------------------------
+    # Warm up microphone
+    # ---------------------------------
+
     try:
         subprocess.run(
             [
@@ -29,8 +37,9 @@ def listen(timeout=None):
     except Exception:
         pass
 
-    filename = "/tmp/ezra_record.wav"
-    duration = 6  # keep full capture window
+    # ---------------------------------
+    # Record audio
+    # ---------------------------------
 
     try:
         subprocess.run(
@@ -48,41 +57,55 @@ def listen(timeout=None):
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-    except Exception:
+    except Exception as e:
+        print("Record failed:", e)
         return None
 
     time.sleep(0.1)
 
+    # ---------------------------------
+    # Verify recording
+    # ---------------------------------
+
     try:
-        with open(filename, "rb") as f:
-            f.read(44)  # skip WAV header
-            audio = np.frombuffer(f.read(), dtype=np.int16)
-            audio = audio.astype(np.float32) / 32768.0
+        filesize = os.path.getsize(filename)
 
-            # 🔥 CLEAN, SINGLE GAIN STAGE
-            audio = np.clip(audio * 12.0, -1.0, 1.0)
+        print(f"Recorded file size: {filesize:,} bytes")
 
-    except Exception:
+        data, sr = sf.read(filename)
+
+        print(f"WAV duration: {len(data)/sr:.2f} sec")
+
+    except Exception as e:
+        print("WAV verification failed:", e)
+
+    # ---------------------------------
+    # Load audio for Whisper
+    # ---------------------------------
+
+    try:
+
+        audio, sr = sf.read(filename)
+
+        audio = audio.astype(np.float32)
+
+        print("Max amplitude:", np.max(np.abs(audio)))
+
+        rms = np.sqrt(np.mean(audio**2))
+
+        print(f"Level: {rms:.4f}")
+        print(f"Samples: {len(audio)}")
+
+        if rms < 0.01:
+            print("⚠️ Audio too quiet")
+            return None
+
+        print(f"Recording length: {len(audio)/sr:.2f} sec")
+        print(f"💾 Saved recording to {filename}")
+
+        return audio
+
+    except Exception as e:
+
+        print("Audio load failed:", e)
         return None
-
-    # =========================
-    # ENERGY CHECK
-    # =========================
-    rms = np.sqrt(np.mean(audio**2))
-    print(f"Level: {rms:.4f}  Samples: {len(audio)}")
-
-    # 🔥 FILTER OUT JUNK / FRAGMENTS
-    if rms < 0.01:
-        return None
-
-    # =========================
-    # 🔥 STABLE TRIM (BEST VERSION)
-    # =========================
-    max_samples = 16000 * 4  # last 4 seconds
-
-    if len(audio) > max_samples:
-        audio = audio[-max_samples:]
-
-    print("💾 Saved recording to /tmp/ezra_record.wav")
-
-    return audio

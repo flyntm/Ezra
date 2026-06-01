@@ -1,5 +1,8 @@
 import contextlib
 import os
+import shutil
+import time
+
 from faster_whisper import WhisperModel
 import scipy.io.wavfile as wav
 import numpy as np
@@ -9,7 +12,9 @@ import numpy as np
 def suppress_stderr():
     devnull = os.open(os.devnull, os.O_WRONLY)
     old = os.dup(2)
+
     os.dup2(devnull, 2)
+
     try:
         yield
     finally:
@@ -19,54 +24,47 @@ def suppress_stderr():
 
 
 print("🧠 Loading Whisper model...")
+
 with suppress_stderr():
-    model = WhisperModel("small.en", device="cpu", compute_type="int8")
+    model = WhisperModel("base.en", device="cpu", compute_type="int8")
+
 print("✅ Model loaded")
 
 
 def transcribe(audio):
+
     print("🧠 STT CALLED")
-    print("🧠 Transcribing...")
+    start = time.time()
 
-    # =========================
-    # NORMALIZE
-    # =========================
-    max_val = np.max(np.abs(audio))
-    if max_val > 0:
-        audio = audio / max_val
+    try:
 
-    # =========================
-    # GAIN BOOST (important)
-    # =========================
-    audio = np.clip(audio * 3.0, -1.0, 1.0)
+        print("🧠 Transcribing...")
 
-    # =========================
-    # 🔥 TRIM AUDIO (CRITICAL FIX)
-    # =========================
-    max_samples = 16000 * 3  # 3 seconds max
-    audio = audio[-max_samples:]
+        # Save EXACTLY what audio.py captured
+        wav.write("temp.wav", 16000, audio)
 
-    # =========================
-    # WRITE TEMP FILE
-    # =========================
-    wav.write("temp.wav", 16000, audio)
+        shutil.copy("temp.wav", "/tmp/whisper_input.wav")
+        print("💾 Saved Whisper input to /tmp/whisper_input.wav")
 
-    # =========================
-    # TRANSCRIBE (FAST + SAFE)
-    # =========================
-    with suppress_stderr():
-        segments, _ = model.transcribe(
-            "temp.wav", language="en", beam_size=1, best_of=1
-        )
+        # Same settings that worked in benchmark_whisper.py
+        with suppress_stderr():
+            segments, info = model.transcribe("temp.wav", beam_size=5)
 
-    # =========================
-    # BUILD TEXT
-    # =========================
-    text = " ".join([seg.text for seg in segments]).strip()
+        text = "".join(segment.text for segment in segments).strip()
 
-    if not text:
-        print("⚠️ No speech recognized")
+        elapsed = time.time() - start
+
+        print(f"⏱️ STT took {elapsed:.2f} sec")
+
+        if not text:
+            print("⚠️ No speech recognized")
+            return ""
+
+        print(f"You said: {text}")
+
+        return text
+
+    except Exception as e:
+
+        print("❌ STT ERROR:", e)
         return ""
-
-    print(f"You said: {text}")
-    return text

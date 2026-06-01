@@ -139,6 +139,7 @@ def run():
             # MODEL INPUT
             # =========================
             audio_int16 = (audio_buffer * 32767).astype(np.int16)
+            rms = np.sqrt(np.mean(audio_buffer**2))
 
             predictions = model.predict(audio_int16)
 
@@ -168,6 +169,7 @@ def run():
             # =========================
             if peak_score > 0.05 or stop_score > 0.05:
                 print(
+                    f"🎤 RMS: {rms:.3f} | "
                     f"🎧 ezra: {ezra_score:.3f} | "
                     f"hey_ezra: {hey_ezra_score:.3f} | "
                     f"stop: {stop_score:.3f}"

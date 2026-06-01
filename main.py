@@ -55,9 +55,8 @@ def main():
             # =========================
             if not command:
                 print("👂 Listening for command...")
-
-                speak("Yes?")
-                time.sleep(0.5)
+                # speak("Yes?")
+                # time.sleep(0.5)
                 audio = listen()
 
                 if audio is None:
