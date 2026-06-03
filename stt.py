@@ -33,7 +33,6 @@ print("✅ Model loaded")
 
 def transcribe(audio):
 
-    print("🧠 STT CALLED")
     start = time.time()
 
     try:
