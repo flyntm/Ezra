@@ -11,6 +11,7 @@ CHANNELS = 1
 THRESHOLD = 0.015
 SILENCE_TIME = 0.8
 MAX_TIME = 10
+COMMAND_TIMEOUT = 3
 
 
 def listen_until_silence(initial_audio=None):
@@ -22,7 +23,7 @@ def listen_until_silence(initial_audio=None):
         initial_audio = np.repeat(initial_audio, 3)
 
         print("Wake RMS:", np.sqrt(np.mean(initial_audio**2)))
-        
+
         chunks.append(initial_audio.reshape(-1, 1))
 
     prebuffer = deque(maxlen=400)
@@ -61,6 +62,10 @@ def listen_until_silence(initial_audio=None):
             if heard_speech and time.time() - last_speech_time > SILENCE_TIME:
                 print("Silence detected")
                 break
+
+            if not heard_speech and time.time() - start_time > COMMAND_TIMEOUT:
+                print("No command detected")
+                return None
 
             if time.time() - start_time > MAX_TIME:
                 print("Maximum time reached")
