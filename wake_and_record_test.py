@@ -1,4 +1,4 @@
-from wake_word import wait_for_wake_word
+from wake_word import wait_for_wake_word_with_audio
 import sounddevice as sd
 import soundfile as sf
 import numpy as np
@@ -13,10 +13,18 @@ SILENCE_TIME = 0.8
 MAX_TIME = 10
 
 
-def listen_until_silence():
+def listen_until_silence(initial_audio=None):
     print("🎤 Listening for command...")
 
     chunks = []
+
+    if initial_audio is not None:
+        initial_audio = np.repeat(initial_audio, 3)
+
+        print("Wake RMS:", np.sqrt(np.mean(initial_audio**2)))
+        
+        chunks.append(initial_audio.reshape(-1, 1))
+
     prebuffer = deque(maxlen=400)
 
     with sd.InputStream(
@@ -68,11 +76,13 @@ def listen_until_silence():
 
 print("👂 Waiting for wake word...")
 
-wake = wait_for_wake_word()
+wake, wake_audio = wait_for_wake_word_with_audio()
 wake_time = time.time()
 print(f"Wake detected: {wake}")
 
-audio = listen_until_silence()
+print(f"Received {len(wake_audio)/16000:.2f} seconds " "of pre-wake audio")
+
+audio = listen_until_silence(wake_audio)
 
 if audio is not None:
     sf.write("wake_test.wav", audio, SAMPLE_RATE)
