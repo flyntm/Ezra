@@ -10,18 +10,18 @@ from collections import deque
 SAMPLE_RATE = 16000
 BLOCK_SIZE = 1024
 
-THRESHOLD = 0.30
+THRESHOLD = 0.20
 STOP_THRESHOLD = 0.45
 
 COOLDOWN = 1.5
 STOP_COOLDOWN = 1.0
 
-WAKE_CONFIRM_DELAY = 0.25
+WAKE_CONFIRM_DELAY = 0.1
 STOP_SUPPRESSION_TIME = 1.0
 
 REARM_THRESHOLD = 0.05
 
-RECENT_AUDIO_SECONDS = 3.0
+RECENT_AUDIO_SECONDS = 1.0
 
 # =========================
 # STATE
@@ -134,7 +134,7 @@ def run(return_audio=False):
             hey_ezra_score = predictions.get("hey_ezra", 0.0)
             stop_score = predictions.get("ezra_stop", 0.0)
 
-            if hey_ezra_score > 0.5:
+            if hey_ezra_score > ezra_score:
                 wake_score = hey_ezra_score
                 detected_phrase = "HEY EZRA"
             else:

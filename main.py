@@ -1,11 +1,10 @@
-print("🔥 USING NEW STT FILE 🔥")
 from audio import listen
 from stt import transcribe
 from tts import speak
 from ezra_brain import ask_ezra
 from ezra_emotion import set_emotion
 from config import *
-from wake_word import wait_for_wake_word
+from wake_word import wait_for_wake_word_with_audio
 import state
 import string
 import time
@@ -45,7 +44,7 @@ def main():
             # =========================
             # WAIT FOR WAKE WORD
             # =========================
-            text = wait_for_wake_word()
+            text, wake_audio = wait_for_wake_word_with_audio()
             print(f"DEBUG wake text: [{text}]")
             # strip wake words
             command = strip_wake_word(text)
@@ -57,7 +56,7 @@ def main():
                 print("👂 Listening for command...")
                 # speak("Yes?")
                 # time.sleep(0.5)
-                audio = listen()
+                audio = listen(wake_audio)
 
                 if audio is None:
                     print("⏱️ Timeout waiting for command")

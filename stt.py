@@ -5,6 +5,7 @@ import time
 
 from faster_whisper import WhisperModel
 import scipy.io.wavfile as wav
+from scipy.signal import resample_poly
 import numpy as np
 
 
@@ -39,14 +40,26 @@ def transcribe(audio):
 
         print("🧠 Transcribing...")
 
-        # Save EXACTLY what audio.py captured
-        wav.write("temp.wav", 16000, audio)
+        # Convert 48k audio from Audio -> 16k for Whisper
+        audio_16k = resample_poly(
+            audio,
+            up=1,
+            down=3,
+        )
+
+        print(f"Audio length before resample: " f"{len(audio)/48000:.2f} sec")
+
+        print(f"Audio length after resample: " f"{len(audio_16k)/16000:.2f} sec")
+
+        wav.write("temp.wav", 16000, audio_16k.astype(np.float32))
 
         shutil.copy("temp.wav", "/tmp/whisper_input.wav")
         print("💾 Saved Whisper input to /tmp/whisper_input.wav")
 
         # Same settings that worked in benchmark_whisper.py
         with suppress_stderr():
+            print("Audio dtype:", audio_16k.dtype)
+            print("Audio max:", np.max(np.abs(audio_16k)))
             segments, info = model.transcribe("temp.wav", beam_size=5)
 
         text = "".join(segment.text for segment in segments).strip()
