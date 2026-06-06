@@ -7,9 +7,9 @@ from scipy.signal import resample_poly
 SAMPLE_RATE = 48000
 
 THRESHOLD = 0.015
-SILENCE_TIME = 0.8
+SILENCE_TIME = 2.0
 MAX_TIME = 10
-COMMAND_TIMEOUT = 3
+COMMAND_TIMEOUT = 5
 
 
 def listen(wake_audio=None):
@@ -57,12 +57,12 @@ def listen(wake_audio=None):
 
         print("Ready")
 
-        heard_speech = wake_audio is not None
-        last_speech_time = time.time()
+        heard_speech = False
+        last_speech_time = None
         start_time = time.time()
 
-        if heard_speech:
-            print("🎤 Continuing from wake audio")
+        if wake_audio is not None:
+            print("🎤 Waiting for command after wake word")
 
         while True:
 
@@ -73,9 +73,13 @@ def listen(wake_audio=None):
             print(f"RMS: {rms:.4f}")
 
             if rms > THRESHOLD:
+
                 if not heard_speech:
-                    print("🎤 SPEECH STARTED")
+
+                    print("🎤 COMMAND STARTED")
+                    chunks = []
                     chunks.extend(prebuffer)
+
                     heard_speech = True
 
                 last_speech_time = time.time()

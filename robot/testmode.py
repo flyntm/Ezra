@@ -23,6 +23,7 @@ eye_v = 90
 pixels = None
 neopixel_ready = False
 
+
 def init_neopixel(silent=False):
     global pixels, neopixel_ready
 
@@ -108,15 +109,18 @@ def eyes_test_up():
     eye_v = 60
     eyes.gaze_smooth(eye_h, eye_v)
 
+
 def eyes_test_down():
     global eye_v
     eye_v = 120
     eyes.gaze_smooth(eye_h, eye_v)
 
+
 def eyes_test_left():
     global eye_h
     eye_h = 60
     eyes.gaze_smooth(eye_h, eye_v)
+
 
 def eyes_test_right():
     global eye_h
@@ -129,6 +133,7 @@ def eyes_test_right():
 # ---------------------------------------------------------
 def look_up_right():
     eyes.gaze_smooth(120, 60)
+
 
 def look_down_left():
     eyes.gaze_smooth(60, 120)
@@ -148,6 +153,7 @@ def neopixel_all_red():
     except Exception as e:
         print(f"[testmode] ERROR setting red: {e}")
 
+
 def neopixel_all_green():
     if not neopixel_ready:
         print("[testmode] ERROR: Neopixel not available")
@@ -158,6 +164,7 @@ def neopixel_all_green():
         print("[testmode] All LEDs: GREEN")
     except Exception as e:
         print(f"[testmode] ERROR setting green: {e}")
+
 
 def neopixel_all_blue():
     if not neopixel_ready:
@@ -170,6 +177,7 @@ def neopixel_all_blue():
     except Exception as e:
         print(f"[testmode] ERROR setting blue: {e}")
 
+
 def neopixel_all_white():
     if not neopixel_ready:
         print("[testmode] ERROR: Neopixel not available")
@@ -181,8 +189,10 @@ def neopixel_all_white():
     except Exception as e:
         print(f"[testmode] ERROR setting white: {e}")
 
+
 def neopixel_off():
     clear_neopixel()
+
 
 def neopixel_cycle():
     """Cycle through all LEDs one at a time"""
@@ -197,24 +207,26 @@ def neopixel_cycle():
     pixels.fill((0, 0, 0))
     pixels_show()
 
+
 def neopixel_rainbow():
     """Rainbow animation"""
     if not neopixel_ready:
         return
     colors = [
-        (255, 0, 0),      # Red
-        (255, 127, 0),    # Orange
-        (255, 255, 0),    # Yellow
-        (0, 255, 0),      # Green
-        (0, 0, 255),      # Blue
-        (75, 0, 130),     # Indigo
-        (148, 0, 211),    # Violet
+        (255, 0, 0),  # Red
+        (255, 127, 0),  # Orange
+        (255, 255, 0),  # Yellow
+        (0, 255, 0),  # Green
+        (0, 0, 255),  # Blue
+        (75, 0, 130),  # Indigo
+        (148, 0, 211),  # Violet
         (255, 255, 255),  # White
     ]
     for i, color in enumerate(colors):
         pixels[i] = color
     pixels_show()
     print("[testmode] Rainbow pattern")
+
 
 def neopixel_pulse():
     """Pulse effect"""

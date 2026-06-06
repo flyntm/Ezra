@@ -80,9 +80,8 @@ class RobotEmotionController:
 
             eyelids.init()
             eyes.init()
-            testmode.init_neopixel(silent=True)
+            testmode.init_neopixel(silent=False)
             animation.reset()
-
             eyes.center()
             eyelids.open_lids()
             self._clear_mouth()
@@ -239,8 +238,8 @@ class RobotEmotionController:
         self._mouth_talk_frame(now, base_color=(190, 125, 0))
 
     def _tick_listening(self, now, t):
-        h = 90 + 4 * math.sin(t * 0.35)
-        v = 86 + 2 * math.sin(t * 0.45)
+        h = 90 + 12 * math.sin(t * 0.35)
+        v = 86 + 5 * math.sin(t * 0.45)
         eyes.gaze(h, v)
         pass
         self._maybe_blink(now)
@@ -306,22 +305,25 @@ class RobotEmotionController:
         self._maybe_blink(now, every=(10.0, 18.0))
         self._mouth_left_side((110, 85, 0), count=2)
 
-    def _maybe_blink(self, *args, **kwargs):
-        return
+    def _maybe_blink(self, now, every=(6.0, 12.0), closed_seconds=0.16):
+        if self._last_blink_at == 0.0:
+            self._last_blink_at = now
 
-    # def _maybe_blink(self, now, every=(6.0, 12.0), closed_seconds=0.16):
-    #     if self._last_blink_at == 0.0:
-    #         self._last_blink_at = now
+        if now - self._last_blink_at < self._next_blink_after:
+            return
 
-    #     if now - self._last_blink_at < self._next_blink_after:
-    #         return
+        eyelids.close_lids()
+        time.sleep(closed_seconds)
 
-    #     eyelids.close_lids()
-    #     time.sleep(closed_seconds)
-    #     with self._lock:
-    #         self._restore_lids_after_blink_locked(self._emotion)
-    #     self._last_blink_at = time.time()
-    #     self._next_blink_after = random.uniform(*every)
+        # Blink used eyelids.close_lids(), which bypasses _set_lids().
+        # Clear the cached lid positions so restore definitely sends open commands.
+        self._last_lid_l = None
+        self._last_lid_r = None
+
+        self._restore_lids_after_blink_locked(self._emotion)
+
+        self._last_blink_at = time.time()
+        self._next_blink_after = random.uniform(*every)
 
     def _restore_lids_after_blink_locked(self, emotion):
         if emotion in ("normal_talking", "listening"):

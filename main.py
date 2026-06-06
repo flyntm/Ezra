@@ -5,6 +5,7 @@ from ezra_brain import ask_ezra
 from ezra_emotion import set_emotion
 from config import *
 from wake_word import wait_for_wake_word_with_audio
+from datetime import datetime
 import state
 import string
 import time
@@ -41,21 +42,23 @@ def main():
 
     try:
         while True:
+
             # =========================
             # WAIT FOR WAKE WORD
             # =========================
             text, wake_audio = wait_for_wake_word_with_audio()
+
             print(f"DEBUG wake text: [{text}]")
-            # strip wake words
+
             command = strip_wake_word(text)
 
             # =========================
             # HANDLE "JUST EZRA"
             # =========================
             if not command:
+
                 print("👂 Listening for command...")
-                # speak("Yes?")
-                # time.sleep(0.5)
+
                 audio = listen(wake_audio)
 
                 if audio is None:
@@ -63,10 +66,23 @@ def main():
                     continue
 
                 text = transcribe(audio)
+
                 if not text:
                     continue
 
                 command = strip_wake_word(text)
+
+                if command.lower().strip() in (
+                    "",
+                    "here's",
+                    "heres",
+                    "ezra",
+                    "hey ezra",
+                    "extra",
+                    "israel",
+                ):
+                    print("⚠️ Wake word only - returning to standby")
+                    continue
 
             else:
                 print(f"⚡ Direct command: {command}")
@@ -80,6 +96,14 @@ def main():
                 continue
 
             text_lower = command.lower()
+
+            # =========================
+            # LOCAL COMMANDS
+            # =========================
+            if "what time" in text_lower:
+                now = datetime.now().strftime("%I:%M %p")
+                speak(f"It is {now}")
+                continue
 
             # =========================
             # EMOTION: LISTENING
