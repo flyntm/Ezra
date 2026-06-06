@@ -5,6 +5,7 @@ from ezra_brain import ask_ezra
 from ezra_emotion import set_emotion
 from config import *
 from wake_word import wait_for_wake_word_with_audio
+from wake_word import wait_for_wake_word_with_audio, reset_idle_timer
 from datetime import datetime
 import state
 import string
@@ -103,6 +104,7 @@ def main():
             if "what time" in text_lower:
                 now = datetime.now().strftime("%I:%M %p")
                 speak(f"It is {now}")
+                reset_idle_timer()
                 continue
 
             # =========================
@@ -144,6 +146,7 @@ def main():
 
             set_emotion(mapped_emotion)
             speak(response)
+            reset_idle_timer()
 
     except KeyboardInterrupt:
         state.shutting_down = True

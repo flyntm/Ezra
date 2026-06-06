@@ -4,6 +4,10 @@ import time
 from openwakeword.model import Model
 from collections import deque
 
+from robot import robot_emotions
+from robot import eyelids
+from robot import eyes
+
 # =========================
 # CONFIG
 # =========================
@@ -23,6 +27,9 @@ REARM_THRESHOLD = 0.05
 
 RECENT_AUDIO_SECONDS = 1.0
 
+# Sleep timeout
+SLEEP_TIMEOUT = 20  # testing (change to 180 later)
+
 # =========================
 # STATE
 # =========================
@@ -37,6 +44,9 @@ pending_phrase = None
 stop_suppression_until = 0
 
 history = deque(maxlen=4)
+
+sleeping = False
+last_activity_time = time.time()
 
 # =========================
 # MODEL
@@ -60,6 +70,45 @@ recent_buffer_size = int(SAMPLE_RATE * RECENT_AUDIO_SECONDS)
 
 audio_buffer = np.zeros(buffer_size, dtype=np.float32)
 recent_audio_buffer = np.zeros(recent_buffer_size, dtype=np.float32)
+
+
+# =========================
+# SLEEP HELPERS
+# =========================
+
+
+def reset_idle_timer():
+    global last_activity_time
+
+    last_activity_time = time.time()
+    print("⏰ IDLE TIMER RESET")
+
+
+def enter_sleep():
+    print("\n😴 Ezra sleeping")
+
+    try:
+        eyes.center()
+        eyelids.close_lids()
+
+        robot_emotions.stop(
+            clear_mouth=True,
+            relax_servos=False,
+        )
+
+    except Exception as e:
+        print(f"Sleep error: {e}")
+
+
+def wake_up():
+    print("\n😊 Ezra waking up")
+
+    try:
+        robot_emotions.start("listening")
+        eyelids.open_lids()
+
+    except Exception as e:
+        print(f"Wake error: {e}")
 
 
 # =========================
@@ -107,6 +156,8 @@ def run(return_audio=False):
     global stop_suppression_until
     global audio_buffer
     global recent_audio_buffer
+    global sleeping
+    global last_activity_time
 
     audio_buffer = np.zeros(buffer_size, dtype=np.float32)
     recent_audio_buffer = np.zeros(recent_buffer_size, dtype=np.float32)
@@ -124,6 +175,13 @@ def run(return_audio=False):
 
         while True:
             current_time = time.time()
+
+            # =========================
+            # SLEEP CHECK
+            # =========================
+            if not sleeping and current_time - last_activity_time > SLEEP_TIMEOUT:
+                enter_sleep()
+                sleeping = True
 
             audio_int16 = (audio_buffer * 32767).astype(np.int16)
             rms = np.sqrt(np.mean(audio_buffer**2))
@@ -183,10 +241,15 @@ def run(return_audio=False):
                     pending_wake = False
 
                 elif current_time - pending_wake_time > WAKE_CONFIRM_DELAY:
+
                     pending_wake = False
                     armed = False
                     last_trigger_time = current_time
                     history.clear()
+
+                    if sleeping:
+                        wake_up()
+                        sleeping = False
 
                     phrase = handle_wake_word(pending_phrase)
 
