@@ -6,7 +6,7 @@
 MIC_DEVICE = "plughw:3,0"
 
 # ALSA speaker output device
-SPEAKER_DEVICE = "plughw:2,0"
+SPEAKER_DEVICE = "plughw:CARD=UACDemoV10,DEV=0"
 
 
 # =========================

@@ -156,28 +156,28 @@ try:
             # =========================
             # STOP DETECTION
             # =========================
-            if (
-                stop_score > STOP_THRESHOLD
-                and current_time - last_stop_time > STOP_COOLDOWN
-            ):
+            # if (
+            #     stop_score > STOP_THRESHOLD
+            #     and current_time - last_stop_time > STOP_COOLDOWN
+            # ):
 
-                print("🛑 EZRA STOP DETECTED!")
+            #     print("🛑 EZRA STOP DETECTED!")
 
-                last_stop_time = current_time
+            #     last_stop_time = current_time
 
-                # Cancel pending wake
-                pending_wake = False
+            #     # Cancel pending wake
+            #     pending_wake = False
 
-                # Suppress wake temporarily
-                stop_suppression_until = current_time + STOP_SUPPRESSION_TIME
+            #     # Suppress wake temporarily
+            #     stop_suppression_until = current_time + STOP_SUPPRESSION_TIME
 
-                # =====================================
-                # TODO:
-                # Interrupt Ezra here
-                # Stop TTS
-                # Stop servos
-                # Cancel OpenAI stream
-                # =====================================
+            # =====================================
+            # TODO:
+            # Interrupt Ezra here
+            # Stop TTS
+            # Stop servos
+            # Cancel OpenAI stream
+            # =====================================
 
             # =========================
             # START PENDING WAKE

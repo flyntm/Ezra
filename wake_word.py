@@ -210,20 +210,20 @@ def run(return_audio=False):
                     f"stop: {stop_score:.3f}"
                 )
 
-            if (
-                stop_score > STOP_THRESHOLD
-                and current_time - last_stop_time > STOP_COOLDOWN
-            ):
-                last_stop_time = current_time
-                pending_wake = False
-                stop_suppression_until = current_time + STOP_SUPPRESSION_TIME
+            # if (
+            #     stop_score > STOP_THRESHOLD
+            #     and current_time - last_stop_time > STOP_COOLDOWN
+            # ):
+            #     last_stop_time = current_time
+            #     pending_wake = False
+            #     stop_suppression_until = current_time + STOP_SUPPRESSION_TIME
 
-                phrase = handle_stop()
+            #     phrase = handle_stop()
 
-                if return_audio:
-                    return phrase, recent_audio_buffer.copy()
+            #     if return_audio:
+            #         return phrase, recent_audio_buffer.copy()
 
-                return phrase
+            #     return phrase
 
             if (
                 peak_score > THRESHOLD
