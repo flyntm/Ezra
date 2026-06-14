@@ -56,6 +56,7 @@ model = Model(
         "/home/flyntm/projects/ezra/ezra.onnx",
         "/home/flyntm/projects/ezra/hey_ezra.onnx",
         "/home/flyntm/projects/ezra/ezra_stop.onnx",
+        "/home/flyntm/projects/ezra/ezzera.onnx",
     ],
     inference_framework="onnx",
 )
@@ -191,13 +192,18 @@ def run(return_audio=False):
             ezra_score = predictions.get("ezra", 0.0)
             hey_ezra_score = predictions.get("hey_ezra", 0.0)
             stop_score = predictions.get("ezra_stop", 0.0)
+            ezzera_score = predictions.get("ezzera", 0.0)
 
-            if hey_ezra_score > ezra_score:
+            wake_score = ezra_score
+            detected_phrase = "EZRA"
+
+            if hey_ezra_score > wake_score:
                 wake_score = hey_ezra_score
                 detected_phrase = "HEY EZRA"
-            else:
-                wake_score = ezra_score
-                detected_phrase = "EZRA"
+
+            if ezzera_score > wake_score:
+                wake_score = ezzera_score
+                detected_phrase = "EZZERA"
 
             history.append(wake_score)
             peak_score = max(history)
@@ -207,6 +213,7 @@ def run(return_audio=False):
                     f"🎤 RMS: {rms:.3f} | "
                     f"🎧 ezra: {ezra_score:.3f} | "
                     f"hey_ezra: {hey_ezra_score:.3f} | "
+                    f"ezzera: {ezzera_score:.3f} | "
                     f"stop: {stop_score:.3f}"
                 )
 

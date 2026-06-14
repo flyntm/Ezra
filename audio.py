@@ -1,115 +1,160 @@
-import sounddevice as sd
-import numpy as np
+import sys
 import time
-from collections import deque
-from scipy.signal import resample_poly
+
+import numpy as np
+import sounddevice as sd
+import usb.core
+
+# --------------------------------------------------
+# CONFIG
+# --------------------------------------------------
 
 SAMPLE_RATE = 48000
+CHANNELS = 1
+BLOCKSIZE = 1024
 
-THRESHOLD = 0.015
-SILENCE_TIME = 2.0
-MAX_TIME = 10
 COMMAND_TIMEOUT = 5
+MAX_TIME = 10
+
+# RMS-based end detection
+END_THRESHOLD = 0.010
+END_SILENCE = 0.8
+
+# --------------------------------------------------
+# RESPEAKER
+# --------------------------------------------------
+
+sys.path.append("/home/flyntm/reSpeaker_XVF3800_USB_4MIC_ARRAY/python_control")
+
+from xvf_host import ReSpeaker
+
+dev = usb.core.find(idVendor=0x2886)
+
+if not dev:
+    raise RuntimeError("❌ ReSpeaker not found")
+
+mic = ReSpeaker(dev)
+
+print("✅ ReSpeaker VAD ready")
+
+
+# --------------------------------------------------
+# HELPERS
+# --------------------------------------------------
+
+
+def read_vad():
+    try:
+        doa = mic.read("DOA_VALUE")
+
+        if len(doa) >= 2:
+            angle = doa[0]
+            speech = bool(doa[1])
+            return speech, angle
+
+    except Exception as e:
+        print(f"VAD error: {e}")
+
+    return False, None
+
+
+# --------------------------------------------------
+# LISTEN
+# --------------------------------------------------
 
 
 def listen(wake_audio=None):
+    """
+    wake_audio is ignored.
+    We now start fresh after wake-word detection.
+    """
 
     print("🎤 Listening for command...")
 
     chunks = []
 
-    # ---------------------------------
-    # Add wake audio if supplied
-    # ---------------------------------
-
-    if wake_audio is not None:
-
-        print(f"Received {len(wake_audio)/16000:.2f} seconds " "of pre-wake audio")
-
-        # Convert Wake audio from 16k -> 48k
-        wake_audio_48k = resample_poly(
-            wake_audio,
-            up=3,
-            down=1,
-        )
-
-        wake_rms = np.sqrt(np.mean(wake_audio_48k**2))
-
-        print(f"Wake RMS: {wake_rms:.4f}")
-
-        chunks.append(wake_audio_48k.reshape(-1, 1))
-
-    # ---------------------------------
-    # Prebuffer
-    # ---------------------------------
-
-    prebuffer = deque(maxlen=400)
-
-    # ---------------------------------
-    # Recording
-    # ---------------------------------
-
     with sd.InputStream(
         samplerate=SAMPLE_RATE,
-        channels=1,
+        channels=CHANNELS,
         dtype="float32",
+        blocksize=BLOCKSIZE,
     ) as stream:
 
         print("Ready")
 
         heard_speech = False
-        last_speech_time = None
+        silence_start = None
+
         start_time = time.time()
 
-        if wake_audio is not None:
-            print("🎤 Waiting for command after wake word")
+        start_angle = None
+        last_angle = None
 
         while True:
 
-            audio, overflowed = stream.read(1024)
-            prebuffer.append(audio.copy())
-            rms = np.sqrt(np.mean(audio**2))
+            audio, overflowed = stream.read(BLOCKSIZE)
 
-            print(f"RMS: {rms:.4f}")
+            if overflowed:
+                print("⚠️ Audio overflow")
 
-            if rms > THRESHOLD:
+            speech, angle = read_vad()
 
-                if not heard_speech:
+            if angle is not None:
+                last_angle = angle
 
-                    print("🎤 COMMAND STARTED")
-                    chunks = []
-                    chunks.extend(prebuffer)
+            # ---------------------------------
+            # START RECORDING (VAD)
+            # ---------------------------------
 
-                    heard_speech = True
+            if speech and not heard_speech:
 
-                last_speech_time = time.time()
+                heard_speech = True
+                start_angle = angle
+
+                print(f"🎤 COMMAND STARTED  DOA={start_angle}°")
+
+            # ---------------------------------
+            # RECORD AUDIO
+            # ---------------------------------
 
             if heard_speech:
+
                 chunks.append(audio)
 
-            # -------------------------
-            # End after silence
-            # -------------------------
+                rms = np.sqrt(np.mean(audio**2))
 
-            if heard_speech and time.time() - last_speech_time > SILENCE_TIME:
-                print("Silence detected")
-                break
+                # Debug if desired
+                # print(f"RMS={rms:.4f}")
 
-            # -------------------------
-            # No command
-            # -------------------------
+                if rms < END_THRESHOLD:
+
+                    if silence_start is None:
+                        silence_start = time.time()
+
+                    elif time.time() - silence_start > END_SILENCE:
+                        print(f"🛑 COMMAND ENDED    DOA={last_angle}°")
+                        break
+
+                else:
+                    silence_start = None
+
+            # ---------------------------------
+            # NO COMMAND
+            # ---------------------------------
 
             if not heard_speech and time.time() - start_time > COMMAND_TIMEOUT:
                 print("No command detected")
                 return None
 
-            # -------------------------
-            # Safety timeout
-            # -------------------------
+            # ---------------------------------
+            # SAFETY TIMEOUT
+            # ---------------------------------
 
             if time.time() - start_time > MAX_TIME:
                 print("Maximum time reached")
                 break
+
+            time.sleep(0.02)
 
     if not chunks:
         print("No audio captured")
@@ -117,6 +162,6 @@ def listen(wake_audio=None):
 
     audio = np.concatenate(chunks, axis=0)
 
-    print(f"Recording length: " f"{len(audio)/SAMPLE_RATE:.2f} sec")
+    print(f"Recording length: " f"{len(audio) / SAMPLE_RATE:.2f} sec")
 
     return audio.astype(np.float32)
