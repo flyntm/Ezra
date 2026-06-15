@@ -7,6 +7,11 @@ from collections import deque
 from robot import robot_emotions
 from robot import eyelids
 from robot import eyes
+import usb.core
+import sys
+
+sys.path.append("/home/flyntm/reSpeaker_XVF3800_USB_4MIC_ARRAY/python_control")
+from xvf_host import ReSpeaker
 
 # =========================
 # CONFIG
@@ -47,6 +52,20 @@ history = deque(maxlen=4)
 
 sleeping = False
 last_activity_time = time.time()
+
+# =========================
+# RESPEAKER VAD
+# =========================
+
+dev = usb.core.find(idVendor=0x2886)
+
+if not dev:
+    print("❌ ReSpeaker not found")
+    raise RuntimeError("ReSpeaker not found")
+
+mic = ReSpeaker(dev)
+
+print("✅ ReSpeaker Connected")
 
 # =========================
 # MODEL
@@ -184,6 +203,18 @@ def run(return_audio=False):
                 enter_sleep()
                 sleeping = True
 
+            doa = mic.read("DOA_VALUE")
+
+            speech = False
+
+            if len(doa) >= 2:
+                speech = bool(doa[1])
+                angle = doa[0]
+
+            if not speech:
+                time.sleep(0.05)
+                continue
+
             audio_int16 = (audio_buffer * 32767).astype(np.int16)
             rms = np.sqrt(np.mean(audio_buffer**2))
 
@@ -194,16 +225,14 @@ def run(return_audio=False):
             stop_score = predictions.get("ezra_stop", 0.0)
             ezzera_score = predictions.get("ezzera", 0.0)
 
-            wake_score = ezra_score
+            ezra_combined = max(ezra_score, ezzera_score)
+
+            wake_score = ezra_combined
             detected_phrase = "EZRA"
 
             if hey_ezra_score > wake_score:
                 wake_score = hey_ezra_score
                 detected_phrase = "HEY EZRA"
-
-            if ezzera_score > wake_score:
-                wake_score = ezzera_score
-                detected_phrase = "EZZERA"
 
             history.append(wake_score)
             peak_score = max(history)
@@ -217,21 +246,6 @@ def run(return_audio=False):
                     f"stop: {stop_score:.3f}"
                 )
 
-            # if (
-            #     stop_score > STOP_THRESHOLD
-            #     and current_time - last_stop_time > STOP_COOLDOWN
-            # ):
-            #     last_stop_time = current_time
-            #     pending_wake = False
-            #     stop_suppression_until = current_time + STOP_SUPPRESSION_TIME
-
-            #     phrase = handle_stop()
-
-            #     if return_audio:
-            #         return phrase, recent_audio_buffer.copy()
-
-            #     return phrase
-
             if (
                 peak_score > THRESHOLD
                 and armed
@@ -244,7 +258,7 @@ def run(return_audio=False):
 
             if pending_wake:
 
-                if stop_score > STOP_THRESHOLD:
+                if False and stop_score > STOP_THRESHOLD:
                     pending_wake = False
 
                 elif current_time - pending_wake_time > WAKE_CONFIRM_DELAY:
@@ -257,6 +271,13 @@ def run(return_audio=False):
                     if sleeping:
                         wake_up()
                         sleeping = False
+
+                    # print(
+                    #     f"DEBUG wake phrase={pending_phrase} "
+                    #     f"ezra={ezra_score:.3f} "
+                    #     f"hey={hey_ezra_score:.3f} "
+                    #     f"ezzera={ezzera_score:.3f}"
+                    # )
 
                     phrase = handle_wake_word(pending_phrase)
 
