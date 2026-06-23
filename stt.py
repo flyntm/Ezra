@@ -3,70 +3,203 @@ import os
 import shutil
 import time
 
-from faster_whisper import WhisperModel
-import scipy.io.wavfile as wav
-from scipy.signal import resample_poly
 import numpy as np
+import scipy.io.wavfile as wav
+from faster_whisper import WhisperModel
+
+# --------------------------------------------------
+# CONFIG
+# --------------------------------------------------
+
+SAMPLE_RATE = 16000
+
+# Reject recordings that clearly contain no usable command.
+MIN_AUDIO_SECONDS = 0.75
+MIN_AUDIO_PEAK = 0.008
+
+TEMP_WAV_FILE = "temp.wav"
+DEBUG_WAV_FILE = "/tmp/whisper_input.wav"
+
+
+# --------------------------------------------------
+# STDERR SUPPRESSION
+# --------------------------------------------------
 
 
 @contextlib.contextmanager
 def suppress_stderr():
+    """
+    Temporarily suppress low-level library warnings written directly
+    to stderr.
+    """
+
     devnull = os.open(os.devnull, os.O_WRONLY)
-    old = os.dup(2)
+    old_stderr = os.dup(2)
 
     os.dup2(devnull, 2)
 
     try:
         yield
+
     finally:
-        os.dup2(old, 2)
+        os.dup2(old_stderr, 2)
         os.close(devnull)
-        os.close(old)
+        os.close(old_stderr)
+
+
+# --------------------------------------------------
+# WHISPER MODEL
+# --------------------------------------------------
 
 
 print("🧠 Loading Whisper model...")
 
 with suppress_stderr():
-    model = WhisperModel("base.en", device="cpu", compute_type="int8")
+    model = WhisperModel(
+        "base.en",
+        device="cpu",
+        compute_type="int8",
+    )
 
 print("✅ Model loaded")
 
 
-def transcribe(audio):
+# --------------------------------------------------
+# TRANSCRIPTION
+# --------------------------------------------------
 
-    start = time.time()
+
+def transcribe(audio):
+    """
+    Transcribe 16 kHz mono float32 audio from Listen.
+
+    Returns recognized text, or an empty string when no usable speech
+    is found.
+    """
+
+    total_start = time.time()
 
     try:
-
         print("🧠 Transcribing...")
 
-        # Convert 48k audio from Audio -> 16k for Whisper
-        audio_16k = resample_poly(
+        if audio is None:
+            print("⚠️ No audio supplied to STT")
+            return ""
+
+        audio_16k = np.asarray(
             audio,
-            up=1,
-            down=3,
+            dtype=np.float32,
+        ).flatten()
+
+        if audio_16k.size == 0:
+            print("⚠️ Empty audio supplied to STT")
+            return ""
+
+        # Protect against invalid samples.
+        audio_16k = np.nan_to_num(
+            audio_16k,
+            nan=0.0,
+            posinf=0.0,
+            neginf=0.0,
         )
 
-        print(f"Audio length before resample: " f"{len(audio)/48000:.2f} sec")
+        duration = len(audio_16k) / SAMPLE_RATE
+        peak = float(np.max(np.abs(audio_16k)))
+        rms = float(np.sqrt(np.mean(audio_16k**2)))
 
-        print(f"Audio length after resample: " f"{len(audio_16k)/16000:.2f} sec")
+        print(f"Audio length: {duration:.2f} sec")
+        print(f"Audio peak: {peak:.6f}")
+        print(f"Audio RMS: {rms:.6f}")
 
-        wav.write("temp.wav", 16000, audio_16k.astype(np.float32))
+        # Normalize audio to a target peak to improve STT accuracy.
+        # Always scale so the maximum peak is near 0.9 (about -1 dBFS).
+        if peak > 0:
+            target_peak = 0.9
+            gain = target_peak / peak
+            audio_16k = np.clip(audio_16k * gain, -1.0, 1.0)
+            peak = float(np.max(np.abs(audio_16k)))
+            rms = float(np.sqrt(np.mean(audio_16k**2)))
+            print(
+                f"🔊 Normalized to peak {target_peak:.2f} (gain x{gain:.2f}), new peak {peak:.6f}"
+            )
 
-        shutil.copy("temp.wav", "/tmp/whisper_input.wav")
-        print("💾 Saved Whisper input to /tmp/whisper_input.wav")
+        # --------------------------------------------------
+        # REJECT CLEARLY EMPTY RECORDINGS
+        # --------------------------------------------------
 
-        # Same settings that worked in benchmark_whisper.py
+        if duration < MIN_AUDIO_SECONDS:
+            print(f"⚠️ Skipping STT: recording too short " f"({duration:.2f} sec)")
+            return ""
+
+        if peak < MIN_AUDIO_PEAK:
+            print(f"⚠️ Skipping STT: audio too quiet " f"(peak={peak:.6f})")
+            return ""
+
+        # Keep a WAV copy for troubleshooting.
+        # Write the debug WAV as 16-bit PCM so playback tools like aplay
+        # hear the same signal level that Whisper receives.
+        audio_int16 = np.int16(np.clip(audio_16k * 32767.0, -32768, 32767))
+
+        wav.write(
+            TEMP_WAV_FILE,
+            SAMPLE_RATE,
+            audio_int16,
+        )
+
+        shutil.copy(
+            TEMP_WAV_FILE,
+            DEBUG_WAV_FILE,
+        )
+
+        if peak < 0.10:
+            print(
+                "⚠️ Low input level detected. "
+                "Check microphone gain, proximity, and ambient noise."
+            )
+
+        print(f"💾 Saved Whisper input to " f"{DEBUG_WAV_FILE}")
+
+        # --------------------------------------------------
+        # WHISPER
+        # --------------------------------------------------
+
+        whisper_start = time.time()
+
         with suppress_stderr():
-            print("Audio dtype:", audio_16k.dtype)
-            print("Audio max:", np.max(np.abs(audio_16k)))
-            segments, info = model.transcribe("temp.wav", beam_size=5)
+            segments, info = model.transcribe(
+                audio_16k,
+                language="en",
+                # Greedy decoding is much faster than beam_size=5
+                # and is usually sufficient for short commands.
+                beam_size=1,
+                # Do not let text from a prior segment influence
+                # a new short command.
+                condition_on_previous_text=False,
+                # Let faster-whisper remove extended silence before
+                # decoding. This helps prevent long stalls on empty
+                # or mostly silent recordings.
+                vad_filter=True,
+                vad_parameters={
+                    "min_silence_duration_ms": 500,
+                    "speech_pad_ms": 200,
+                },
+            )
 
-        text = "".join(segment.text for segment in segments).strip()
+            # faster-whisper performs decoding while the generator
+            # is consumed, so convert it to a list while timing it.
+            segments = list(segments)
 
-        elapsed = time.time() - start
+        whisper_elapsed = time.time() - whisper_start
 
-        print(f"⏱️ STT took {elapsed:.2f} sec")
+        print(f"⏱️ Whisper decoding took " f"{whisper_elapsed:.2f} sec")
+
+        text = " ".join(
+            segment.text.strip() for segment in segments if segment.text.strip()
+        ).strip()
+
+        total_elapsed = time.time() - total_start
+
+        print(f"⏱️ Total STT took " f"{total_elapsed:.2f} sec")
 
         if not text:
             print("⚠️ No speech recognized")
@@ -77,6 +210,7 @@ def transcribe(audio):
         return text
 
     except Exception as e:
+        elapsed = time.time() - total_start
 
-        print("❌ STT ERROR:", e)
+        print(f"❌ STT ERROR after {elapsed:.2f} sec: {e}")
         return ""

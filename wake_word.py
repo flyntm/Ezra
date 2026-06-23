@@ -1,75 +1,71 @@
-import numpy as np
-import sounddevice as sd
+import sys
 import time
-from openwakeword.model import Model
 from collections import deque
 
-from robot import robot_emotions
+import numpy as np
+import sounddevice as sd
+import usb.core
+from openwakeword.model import Model
+
 from robot import eyelids
 from robot import eyes
-import usb.core
-import sys
-
-sys.path.append("/home/flyntm/reSpeaker_XVF3800_USB_4MIC_ARRAY/python_control")
-from xvf_host import ReSpeaker
+from robot import robot_emotions
 
 # =========================
 # CONFIG
 # =========================
+
+MIC_DEVICE = 1
+
 SAMPLE_RATE = 16000
+CHANNELS = 1
 BLOCK_SIZE = 1024
 
-THRESHOLD = 0.20
-STOP_THRESHOLD = 0.45
-
-COOLDOWN = 1.5
-STOP_COOLDOWN = 1.0
-
-WAKE_CONFIRM_DELAY = 0.1
-STOP_SUPPRESSION_TIME = 1.0
-
+# Wake-word sensitivity
+THRESHOLD = 0.15
 REARM_THRESHOLD = 0.05
 
-RECENT_AUDIO_SECONDS = 1.0
+# Small delay after the score first crosses the threshold.
+WAKE_CONFIRM_DELAY = 0.10
 
-# Sleep timeout
-SLEEP_TIMEOUT = 20  # testing (change to 180 later)
+# Audio returned with the detected wake word.
+# Increase slightly to preserve more pre-wake audio across the handoff.
+RECENT_AUDIO_SECONDS = 2.5
+# Continue capturing briefly after detecting the wake word.
+POST_WAKE_AUDIO_SECONDS = 0.40
 
-# =========================
-# STATE
-# =========================
-armed = True
-last_trigger_time = 0
-last_stop_time = 0
+# Testing value. Change to 180 later.
+SLEEP_TIMEOUT = 20
 
-pending_wake = False
-pending_wake_time = 0
-pending_phrase = None
+# Direct ALSA device 1 may remain busy briefly while switching
+# between Listen and Wake.
+MIC_OPEN_RETRIES = 8
+MIC_RETRY_DELAY = 0.25
+MIC_RELEASE_DELAY = 0.25
 
-stop_suppression_until = 0
-
-history = deque(maxlen=4)
-
-sleeping = False
-last_activity_time = time.time()
 
 # =========================
-# RESPEAKER VAD
+# RESPEAKER
 # =========================
+
+sys.path.append("/home/flyntm/reSpeaker_XVF3800_USB_4MIC_ARRAY/python_control")
+
+from xvf_host import ReSpeaker
 
 dev = usb.core.find(idVendor=0x2886)
 
 if not dev:
-    print("❌ ReSpeaker not found")
-    raise RuntimeError("ReSpeaker not found")
+    raise RuntimeError("❌ ReSpeaker not found")
 
 mic = ReSpeaker(dev)
 
 print("✅ ReSpeaker Connected")
 
+
 # =========================
 # MODEL
 # =========================
+
 model = Model(
     wakeword_models=[
         "/home/flyntm/projects/ezra/ezra.onnx",
@@ -82,14 +78,33 @@ model = Model(
 
 print("Loaded models:", model.models.keys())
 
+
 # =========================
 # AUDIO BUFFERS
 # =========================
-buffer_size = int(SAMPLE_RATE * 1.0)
+
+BUFFER_SECONDS = 1.0
+
+buffer_size = int(SAMPLE_RATE * BUFFER_SECONDS)
 recent_buffer_size = int(SAMPLE_RATE * RECENT_AUDIO_SECONDS)
 
-audio_buffer = np.zeros(buffer_size, dtype=np.float32)
-recent_audio_buffer = np.zeros(recent_buffer_size, dtype=np.float32)
+audio_buffer = np.zeros(
+    buffer_size,
+    dtype=np.float32,
+)
+
+recent_audio_buffer = np.zeros(
+    recent_buffer_size,
+    dtype=np.float32,
+)
+
+
+# =========================
+# STATE
+# =========================
+
+sleeping = False
+last_activity_time = time.time()
 
 
 # =========================
@@ -134,19 +149,18 @@ def wake_up():
 # =========================
 # ACTIONS
 # =========================
+
+
 def handle_wake_word(phrase):
     print(f"\n🚀 {phrase} DETECTED!")
     return phrase.lower()
 
 
-def handle_stop():
-    print("\n🛑 EZRA STOP DETECTED!")
-    return "ezra stop"
-
-
 # =========================
 # AUDIO CALLBACK
 # =========================
+
+
 def audio_callback(indata, frames, time_info, status):
     global audio_buffer
     global recent_audio_buffer
@@ -164,68 +178,143 @@ def audio_callback(indata, frames, time_info, status):
 
 
 # =========================
+# MICROPHONE
+# =========================
+
+
+def open_microphone():
+    """
+    Open the direct ReSpeaker ALSA input.
+
+    Listen and Wake use the same hardware device, so ALSA may need
+    a brief moment to release it between streams.
+    """
+
+    last_error = None
+
+    for attempt in range(1, MIC_OPEN_RETRIES + 1):
+        try:
+            stream = sd.InputStream(
+                device=MIC_DEVICE,
+                samplerate=SAMPLE_RATE,
+                channels=CHANNELS,
+                dtype="float32",
+                blocksize=BLOCK_SIZE,
+                callback=audio_callback,
+            )
+
+            stream.start()
+            return stream
+
+        except sd.PortAudioError as e:
+            last_error = e
+
+            if attempt < MIC_OPEN_RETRIES:
+                print(
+                    f"⚠️ Microphone busy — retrying "
+                    f"({attempt}/{MIC_OPEN_RETRIES})..."
+                )
+                time.sleep(MIC_RETRY_DELAY)
+
+    raise last_error
+
+
+# =========================
 # MAIN LOOP
 # =========================
+
+
 def run(return_audio=False):
-    global armed
-    global last_trigger_time
-    global last_stop_time
-    global pending_wake
-    global pending_wake_time
-    global pending_phrase
-    global stop_suppression_until
     global audio_buffer
     global recent_audio_buffer
     global sleeping
     global last_activity_time
 
-    audio_buffer = np.zeros(buffer_size, dtype=np.float32)
-    recent_audio_buffer = np.zeros(recent_buffer_size, dtype=np.float32)
+    # Reset all detection state each time Wake is entered.
+    #
+    # This is important because Main calls this function again after
+    # every command. A previous wake must not leave the next run
+    # disarmed.
+    armed = True
+
+    pending_wake = False
+    pending_wake_time = 0.0
+    pending_phrase = None
+
+    history = deque(maxlen=4)
+
+    audio_buffer = np.zeros(
+        buffer_size,
+        dtype=np.float32,
+    )
+
+    recent_audio_buffer = np.zeros(
+        recent_buffer_size,
+        dtype=np.float32,
+    )
+
+    # Flush stale OpenWakeWord features from the previous detection.
+    flush_audio = np.zeros(
+        SAMPLE_RATE,
+        dtype=np.int16,
+    )
+
+    model.predict(flush_audio)
 
     print("\n✅ Ready")
     print("\n👂 Listening for wake words...\n")
 
-    with sd.InputStream(
-        samplerate=SAMPLE_RATE,
-        blocksize=BLOCK_SIZE,
-        channels=1,
-        dtype="float32",
-        callback=audio_callback,
-    ):
+    stream = open_microphone()
 
+    try:
         while True:
             current_time = time.time()
 
             # =========================
             # SLEEP CHECK
             # =========================
+
             if not sleeping and current_time - last_activity_time > SLEEP_TIMEOUT:
                 enter_sleep()
                 sleeping = True
 
-            doa = mic.read("DOA_VALUE")
-
+            # ReSpeaker VAD is retained for diagnostics and DoA,
+            # but it does not block OpenWakeWord processing.
             speech = False
+            angle = None
 
-            if len(doa) >= 2:
-                speech = bool(doa[1])
-                angle = doa[0]
+            try:
+                doa = mic.read("DOA_VALUE")
 
-            if not speech:
-                time.sleep(0.05)
-                continue
+                if len(doa) >= 2:
+                    angle = doa[0]
+                    speech = bool(doa[1])
 
-            audio_int16 = (audio_buffer * 32767).astype(np.int16)
-            rms = np.sqrt(np.mean(audio_buffer**2))
+            except Exception as e:
+                print(f"VAD error: {e}")
+
+            # Always run OpenWakeWord, even if the ReSpeaker VAD
+            # does not recognize quiet speech.
+            audio_int16 = np.clip(
+                audio_buffer * 32767,
+                -32768,
+                32767,
+            ).astype(np.int16)
+
+            rms = float(np.sqrt(np.mean(audio_buffer**2)))
 
             predictions = model.predict(audio_int16)
 
-            ezra_score = predictions.get("ezra", 0.0)
-            hey_ezra_score = predictions.get("hey_ezra", 0.0)
-            stop_score = predictions.get("ezra_stop", 0.0)
-            ezzera_score = predictions.get("ezzera", 0.0)
+            ezra_score = float(predictions.get("ezra", 0.0))
+            hey_ezra_score = float(predictions.get("hey_ezra", 0.0))
+            stop_score = float(predictions.get("ezra_stop", 0.0))
+            ezzera_score = float(predictions.get("ezzera", 0.0))
 
-            ezra_combined = max(ezra_score, ezzera_score)
+            # The Ezra and Ezzera models both count as "Ezra."
+            ezra_combined = max(
+                ezra_score,
+                ezzera_score,
+            )
 
             wake_score = ezra_combined
             detected_phrase = "EZRA"
@@ -240,60 +329,79 @@ def run(return_audio=False):
             if peak_score > 0.05 or stop_score > 0.05:
                 print(
                     f"🎤 RMS: {rms:.3f} | "
+                    f"VAD: {'YES' if speech else 'NO '} | "
                     f"🎧 ezra: {ezra_score:.3f} | "
                     f"hey_ezra: {hey_ezra_score:.3f} | "
                     f"ezzera: {ezzera_score:.3f} | "
                     f"stop: {stop_score:.3f}"
                 )
 
-            if (
-                peak_score > THRESHOLD
-                and armed
-                and not pending_wake
-                and current_time > stop_suppression_until
-            ):
+            # Start a pending wake detection.
+            if peak_score >= THRESHOLD and armed and not pending_wake:
                 pending_wake = True
                 pending_wake_time = current_time
                 pending_phrase = detected_phrase
 
+            # Confirm the pending detection.
             if pending_wake:
-
-                if False and stop_score > STOP_THRESHOLD:
-                    pending_wake = False
-
-                elif current_time - pending_wake_time > WAKE_CONFIRM_DELAY:
-
+                if current_time - pending_wake_time >= WAKE_CONFIRM_DELAY:
                     pending_wake = False
                     armed = False
-                    last_trigger_time = current_time
                     history.clear()
 
                     if sleeping:
                         wake_up()
                         sleeping = False
 
-                    # print(
-                    #     f"DEBUG wake phrase={pending_phrase} "
-                    #     f"ezra={ezra_score:.3f} "
-                    #     f"hey={hey_ezra_score:.3f} "
-                    #     f"ezzera={ezzera_score:.3f}"
-                    # )
+                    last_activity_time = current_time
 
                     phrase = handle_wake_word(pending_phrase)
 
+                    # Keep the Wake stream open briefly to capture the beginning
+                    # of a command spoken immediately after "Ezra."
+                    time.sleep(POST_WAKE_AUDIO_SECONDS)
+
+                    wake_audio = recent_audio_buffer.copy()
+
+                    # Flush the detected wake word from OpenWakeWord's
+                    # internal feature buffer before the next run.
+                    model.predict(
+                        np.zeros(
+                            SAMPLE_RATE,
+                            dtype=np.int16,
+                        )
+                    )
+
                     if return_audio:
-                        return phrase, recent_audio_buffer.copy()
+                        return phrase, wake_audio
 
                     return phrase
 
-            if not armed:
-                if (
-                    current_time - last_trigger_time > COOLDOWN
-                    and peak_score < REARM_THRESHOLD
-                ):
-                    armed = True
+            # This is mainly useful if run() is used in a mode where
+            # it does not immediately return after detection.
+            if not armed and peak_score < REARM_THRESHOLD:
+                armed = True
 
             time.sleep(0.05)
+
+    finally:
+        try:
+            stream.stop()
+        except Exception:
+            pass
+
+        try:
+            stream.close()
+        except Exception:
+            pass
+
+        # Give ALSA time to release device 1 before Listen opens it.
+        time.sleep(MIC_RELEASE_DELAY)
+
+
+# =========================
+# PUBLIC FUNCTIONS
+# =========================
 
 
 def wait_for_wake_word():
@@ -304,8 +412,14 @@ def wait_for_wake_word_with_audio():
     return run(return_audio=True)
 
 
+# =========================
+# STANDALONE TEST
+# =========================
+
+
 if __name__ == "__main__":
     try:
         run()
+
     except KeyboardInterrupt:
         print("\n🛑 Stopped")

@@ -1,5 +1,6 @@
 import sys
 import time
+from collections import deque
 
 import numpy as np
 import sounddevice as sd
@@ -9,16 +10,43 @@ import usb.core
 # CONFIG
 # --------------------------------------------------
 
-SAMPLE_RATE = 48000
+MIC_DEVICE = 1
+
+SAMPLE_RATE = 16000
 CHANNELS = 1
 BLOCKSIZE = 1024
 
-COMMAND_TIMEOUT = 5
-MAX_TIME = 10
+# How long Ezra waits for you to begin the command
+# after it prints "Ready for command."
+COMMAND_TIMEOUT = 5.0
 
-# RMS-based end detection
+# Maximum duration of the spoken command itself
+MAX_COMMAND_TIME = 10.0
+
+# After the wake word, require this much quiet audio
+# before accepting command speech.
+ARM_SILENCE = 0.10
+ARM_THRESHOLD = 0.005
+
+# Require speech detection before declaring the command has started.
+# A lower confirm block count helps preserve early words.
+START_THRESHOLD = 0.012
+START_CONFIRM_BLOCKS = 1
+
+# Preserve more audio from before command confirmation
+# so the first word does not get cut off.
+PREBUFFER_SECONDS = 0.80
+
+# End the command after sustained quiet.
 END_THRESHOLD = 0.010
-END_SILENCE = 0.8
+END_SILENCE = 1.20
+
+# Direct ALSA devices can remain busy briefly while
+# switching between Wake and Listen.
+MIC_OPEN_RETRIES = 8
+MIC_RETRY_DELAY = 0.25
+MIC_RELEASE_DELAY = 0.25
+
 
 # --------------------------------------------------
 # RESPEAKER
@@ -44,6 +72,8 @@ print("✅ ReSpeaker VAD ready")
 
 
 def read_vad():
+    """Return the ReSpeaker speech flag and direction of arrival."""
+
     try:
         doa = mic.read("DOA_VALUE")
 
@@ -58,6 +88,42 @@ def read_vad():
     return False, None
 
 
+def open_microphone():
+    """
+    Open the direct ReSpeaker ALSA device.
+
+    Wake and Listen use the same hardware device, so ALSA may need
+    a brief moment to release it while switching between streams.
+    """
+
+    last_error = None
+
+    for attempt in range(1, MIC_OPEN_RETRIES + 1):
+        try:
+            stream = sd.InputStream(
+                device=MIC_DEVICE,
+                samplerate=SAMPLE_RATE,
+                channels=CHANNELS,
+                dtype="float32",
+                blocksize=BLOCKSIZE,
+            )
+
+            stream.start()
+            return stream
+
+        except sd.PortAudioError as e:
+            last_error = e
+
+            if attempt < MIC_OPEN_RETRIES:
+                print(
+                    f"⚠️ Microphone busy — retrying "
+                    f"({attempt}/{MIC_OPEN_RETRIES})..."
+                )
+                time.sleep(MIC_RETRY_DELAY)
+
+    raise last_error
+
+
 # --------------------------------------------------
 # LISTEN
 # --------------------------------------------------
@@ -65,103 +131,199 @@ def read_vad():
 
 def listen(wake_audio=None):
     """
-    wake_audio is ignored.
-    We now start fresh after wake-word detection.
+    Listen for a command after wake-word detection.
+
+    If wake_audio is provided, it may contain the beginning
+    of a continuously spoken command.
     """
 
     print("🎤 Listening for command...")
 
     chunks = []
 
-    with sd.InputStream(
-        samplerate=SAMPLE_RATE,
-        channels=CHANNELS,
-        dtype="float32",
-        blocksize=BLOCKSIZE,
-    ) as stream:
+    has_wake_audio = wake_audio is not None and len(wake_audio) > 0
 
+    continuous_command = False
+    wake_audio_chunks = []
+
+    if has_wake_audio:
+        wake_audio = np.asarray(
+            wake_audio,
+            dtype=np.float32,
+        ).flatten()
+
+        wake_audio_chunks = [
+            wake_audio[i : i + BLOCKSIZE] for i in range(0, len(wake_audio), BLOCKSIZE)
+        ]
+
+        # Preserve the wake audio in the prebuffer so immediate follow-up speech
+        # is still captured without forcing a false continuous-command state.
+        prebuffer_blocks = max(
+            1,
+            int(PREBUFFER_SECONDS * SAMPLE_RATE / BLOCKSIZE),
+        )
+
+        prebuffer = deque(maxlen=prebuffer_blocks)
+        prebuffer.extend(wake_audio_chunks)
+
+        tail_samples = int(0.30 * SAMPLE_RATE)
+        wake_tail = wake_audio[-tail_samples:]
+
+        tail_rms = float(np.sqrt(np.mean(wake_tail**2)))
+        continuous_command = tail_rms >= START_THRESHOLD
+
+        if continuous_command:
+            chunks.extend(wake_audio_chunks)
+
+        print(f"Wake tail RMS: {tail_rms:.4f}")
+    else:
+        prebuffer_blocks = max(
+            1,
+            int(PREBUFFER_SECONDS * SAMPLE_RATE / BLOCKSIZE),
+        )
+
+        prebuffer = deque(maxlen=prebuffer_blocks)
+
+    stream = open_microphone()
+
+    try:
         print("Ready")
 
-        heard_speech = False
-        silence_start = None
+        armed = continuous_command
+        heard_speech = continuous_command
 
-        start_time = time.time()
+        if has_wake_audio and not continuous_command:
+            print("👂 Wake audio present — waiting for command speech")
+
+        arm_silence_start = None
+        command_wait_start = time.time()
+        command_start_time = time.time() if continuous_command else None
+        end_silence_start = None
+
+        speech_blocks = 0
 
         start_angle = None
         last_angle = None
 
-        while True:
+        if continuous_command:
+            print("🎤 CONTINUOUS COMMAND STARTED")
 
+        while True:
             audio, overflowed = stream.read(BLOCKSIZE)
+            now = time.time()
 
             if overflowed:
                 print("⚠️ Audio overflow")
 
-            speech, angle = read_vad()
+            audio = np.asarray(
+                audio,
+                dtype=np.float32,
+            ).flatten()
+
+            rms = float(np.sqrt(np.mean(audio**2)))
+
+            vad_speech, angle = read_vad()
 
             if angle is not None:
                 last_angle = angle
 
-            # ---------------------------------
-            # START RECORDING (VAD)
-            # ---------------------------------
+            # Preserve recent audio until speech is confirmed.
+            if not heard_speech:
+                prebuffer.append(audio.copy())
 
-            if speech and not heard_speech:
+            # Wait for the wake phrase to finish.
+            if not armed:
+                if rms < ARM_THRESHOLD:
+                    if arm_silence_start is None:
+                        arm_silence_start = now
 
-                heard_speech = True
-                start_angle = angle
+                    elif now - arm_silence_start >= ARM_SILENCE:
+                        armed = True
+                        command_wait_start = now
+                        speech_blocks = 0
 
-                print(f"🎤 COMMAND STARTED  DOA={start_angle}°")
-
-            # ---------------------------------
-            # RECORD AUDIO
-            # ---------------------------------
-
-            if heard_speech:
-
-                chunks.append(audio)
-
-                rms = np.sqrt(np.mean(audio**2))
-
-                # Debug if desired
-                # print(f"RMS={rms:.4f}")
-
-                if rms < END_THRESHOLD:
-
-                    if silence_start is None:
-                        silence_start = time.time()
-
-                    elif time.time() - silence_start > END_SILENCE:
-                        print(f"🛑 COMMAND ENDED    DOA={last_angle}°")
-                        break
+                        print("👂 Ready for command")
 
                 else:
-                    silence_start = None
+                    arm_silence_start = None
 
-            # ---------------------------------
-            # NO COMMAND
-            # ---------------------------------
+                continue
 
-            if not heard_speech and time.time() - start_time > COMMAND_TIMEOUT:
-                print("No command detected")
-                return None
+            # Wait for a separately spoken command.
+            if not heard_speech:
+                if vad_speech and rms >= START_THRESHOLD:
+                    speech_blocks += 1
 
-            # ---------------------------------
-            # SAFETY TIMEOUT
-            # ---------------------------------
+                    if speech_blocks >= START_CONFIRM_BLOCKS:
+                        heard_speech = True
+                        command_start_time = now
+                        start_angle = angle
+                        end_silence_start = None
 
-            if time.time() - start_time > MAX_TIME:
-                print("Maximum time reached")
+                        chunks.extend(list(prebuffer))
+                        prebuffer.clear()
+
+                        print(
+                            f"🎤 COMMAND STARTED  "
+                            f"DOA={start_angle}° "
+                            f"RMS={rms:.4f}"
+                        )
+
+                else:
+                    speech_blocks = 0
+
+                if now - command_wait_start >= COMMAND_TIMEOUT:
+                    print("No command detected")
+                    return None
+
+                continue
+
+            # Record the command.
+            chunks.append(audio.copy())
+
+            if rms < END_THRESHOLD:
+                if end_silence_start is None:
+                    end_silence_start = now
+
+                elif now - end_silence_start >= END_SILENCE:
+                    print(f"🛑 COMMAND ENDED    " f"DOA={last_angle}°")
+                    break
+
+            else:
+                end_silence_start = None
+
+            if (
+                command_start_time is not None
+                and now - command_start_time >= MAX_COMMAND_TIME
+            ):
+                print("Maximum command time reached")
                 break
 
-            time.sleep(0.02)
+    finally:
+        try:
+            stream.stop()
+        except Exception:
+            pass
+
+        try:
+            stream.close()
+        except Exception:
+            pass
+
+        time.sleep(MIC_RELEASE_DELAY)
 
     if not chunks:
         print("No audio captured")
         return None
 
-    audio = np.concatenate(chunks, axis=0)
+    audio = np.concatenate(chunks, axis=0).flatten()
 
-    print(f"Recording length: " f"{len(audio) / SAMPLE_RATE:.2f} sec")
+    duration = len(audio) / SAMPLE_RATE
+    peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
+    rms = float(np.sqrt(np.mean(audio**2))) if len(audio) else 0.0
+
+    print(f"Recording length: {duration:.2f} sec")
+    print(f"Recording peak: {peak:.6f}")
+    print(f"Recording RMS: {rms:.6f}")
 
     return audio.astype(np.float32)
