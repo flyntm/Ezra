@@ -31,8 +31,10 @@ WAKE_CONFIRM_DELAY = 0.10
 # Audio returned with the detected wake word.
 # Increase slightly to preserve more pre-wake audio across the handoff.
 RECENT_AUDIO_SECONDS = 2.5
+# Keep a small prebuffer of command audio around the wake word.
+PREBUFFER_SECONDS = 0.80
 # Continue capturing briefly after detecting the wake word.
-POST_WAKE_AUDIO_SECONDS = 0.40
+POST_WAKE_AUDIO_SECONDS = 0.80
 
 # Testing value. Change to 180 later.
 SLEEP_TIMEOUT = 20
@@ -80,23 +82,46 @@ print("Loaded models:", model.models.keys())
 
 
 # =========================
-# AUDIO BUFFERS
+# AUDIO HELPERS
 # =========================
+
+
+def get_buffer_in_order(buffer, start_idx, count):
+    """Extract the most recent valid samples in chronological order."""
+    if count <= 0:
+        return np.empty((0,), dtype=buffer.dtype)
+
+    buffer_len = len(buffer)
+    if buffer_len == 0:
+        return np.empty((0,), dtype=buffer.dtype)
+
+    count = min(count, buffer_len)
+    end_idx = start_idx % buffer_len
+    start_idx = (end_idx - count) % buffer_len
+
+    if count == buffer_len:
+        if end_idx == 0:
+            return buffer.copy()
+        return np.concatenate([buffer[end_idx:], buffer[:end_idx]])
+
+    if start_idx < end_idx:
+        return buffer[start_idx:end_idx].copy()
+
+    return np.concatenate([buffer[start_idx:], buffer[:end_idx]])
+
 
 BUFFER_SECONDS = 1.0
 
 buffer_size = int(SAMPLE_RATE * BUFFER_SECONDS)
 recent_buffer_size = int(SAMPLE_RATE * RECENT_AUDIO_SECONDS)
 
-audio_buffer = np.zeros(
-    buffer_size,
-    dtype=np.float32,
-)
-
-recent_audio_buffer = np.zeros(
-    recent_buffer_size,
-    dtype=np.float32,
-)
+# Preallocated circular buffers and indices for fast callback
+audio_buffer = np.zeros(buffer_size, dtype=np.float32)
+recent_audio_buffer = np.zeros(recent_buffer_size, dtype=np.float32)
+audio_buffer_idx = 0
+recent_buffer_idx = 0
+audio_buffer_len = 0
+recent_buffer_len = 0
 
 
 # =========================
@@ -162,19 +187,45 @@ def handle_wake_word(phrase):
 
 
 def audio_callback(indata, frames, time_info, status):
-    global audio_buffer
-    global recent_audio_buffer
+    global audio_buffer, recent_audio_buffer
+    global audio_buffer_idx, recent_buffer_idx
+    global audio_buffer_len, recent_buffer_len
 
     if status:
         print("⚠️", status)
 
     audio = indata[:, 0].copy()
+    n_samples = len(audio)
 
-    audio_buffer = np.concatenate((audio_buffer, audio))
-    audio_buffer = audio_buffer[-buffer_size:]
+    # Circular buffer fill for audio_buffer
+    remaining = buffer_size - audio_buffer_idx
 
-    recent_audio_buffer = np.concatenate((recent_audio_buffer, audio))
-    recent_audio_buffer = recent_audio_buffer[-recent_buffer_size:]
+    if n_samples <= remaining:
+        audio_buffer[audio_buffer_idx : audio_buffer_idx + n_samples] = audio
+        audio_buffer_idx += n_samples
+        if audio_buffer_idx >= buffer_size:
+            audio_buffer_idx = 0
+    else:
+        audio_buffer[audio_buffer_idx:] = audio[:remaining]
+        audio_buffer[: n_samples - remaining] = audio[remaining:]
+        audio_buffer_idx = n_samples - remaining
+
+    audio_buffer_len = min(buffer_size, audio_buffer_len + n_samples)
+
+    # Circular buffer fill for recent_audio_buffer
+    remaining = recent_buffer_size - recent_buffer_idx
+
+    if n_samples <= remaining:
+        recent_audio_buffer[recent_buffer_idx : recent_buffer_idx + n_samples] = audio
+        recent_buffer_idx += n_samples
+        if recent_buffer_idx >= recent_buffer_size:
+            recent_buffer_idx = 0
+    else:
+        recent_audio_buffer[recent_buffer_idx:] = audio[:remaining]
+        recent_audio_buffer[: n_samples - remaining] = audio[remaining:]
+        recent_buffer_idx = n_samples - remaining
+
+    recent_buffer_len = min(recent_buffer_size, recent_buffer_len + n_samples)
 
 
 # =========================
@@ -229,6 +280,8 @@ def run(return_audio=False):
     global recent_audio_buffer
     global sleeping
     global last_activity_time
+    global audio_buffer_idx, recent_buffer_idx
+    global audio_buffer_len, recent_buffer_len
 
     # Reset all detection state each time Wake is entered.
     #
@@ -252,6 +305,11 @@ def run(return_audio=False):
         recent_buffer_size,
         dtype=np.float32,
     )
+
+    audio_buffer_idx = 0
+    recent_buffer_idx = 0
+    audio_buffer_len = 0
+    recent_buffer_len = 0
 
     # Flush stale OpenWakeWord features from the previous detection.
     flush_audio = np.zeros(
@@ -358,10 +416,24 @@ def run(return_audio=False):
                     phrase = handle_wake_word(pending_phrase)
 
                     # Keep the Wake stream open briefly to capture the beginning
-                    # of a command spoken immediately after "Ezra."
+                    # of a command spoken immediately after the wake phrase.
                     time.sleep(POST_WAKE_AUDIO_SECONDS)
 
-                    wake_audio = recent_audio_buffer.copy()
+                    wake_audio = get_buffer_in_order(
+                        recent_audio_buffer,
+                        recent_buffer_idx,
+                        min(
+                            recent_buffer_len,
+                            int(POST_WAKE_AUDIO_SECONDS * SAMPLE_RATE),
+                        ),
+                    )
+                    if len(wake_audio) > 0:
+                        trim_samples = int(0.20 * SAMPLE_RATE)
+                        if len(wake_audio) > trim_samples:
+                            wake_audio = wake_audio[trim_samples:]
+                    print(
+                        f"📼 Captured {len(wake_audio)/SAMPLE_RATE:.2f} sec of post-wake audio"
+                    )
 
                     # Flush the detected wake word from OpenWakeWord's
                     # internal feature buffer before the next run.

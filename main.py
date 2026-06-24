@@ -14,6 +14,10 @@ from wake_word import (
     wait_for_wake_word_with_audio,
 )
 
+# STT: Using local Whisper (base.en) for fast, offline transcription.
+# No external API dependency or cost. compare_stt.py can benchmark
+# against online models if needed.
+
 # Common Whisper misinterpretations of "Ezra."
 WAKE_WORDS = {
     "ezra",

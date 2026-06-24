@@ -13,9 +13,11 @@ from faster_whisper import WhisperModel
 
 SAMPLE_RATE = 16000
 
-# Reject recordings that clearly contain no usable command.
-MIN_AUDIO_SECONDS = 0.75
-MIN_AUDIO_PEAK = 0.008
+# Tuned for base.en Whisper model (fast, ~80M params).
+# These thresholds balance filtering out noise/silence
+# while avoiding false negatives on quiet speech.
+MIN_AUDIO_SECONDS = 0.75  # Minimum command duration (0.75 sec)
+MIN_AUDIO_PEAK = 0.008  # Minimum peak amplitude to transcribe
 
 TEMP_WAV_FILE = "temp.wav"
 DEBUG_WAV_FILE = "/tmp/whisper_input.wav"
@@ -55,6 +57,9 @@ def suppress_stderr():
 print("🧠 Loading Whisper model...")
 
 with suppress_stderr():
+    # base.en: Fast (~80M params), good accuracy for commands.
+    # Runs ~2-3 sec on CPU. Alternative: small.en (~244M) for better
+    # accuracy but 5-7 sec latency; use compare_stt.py to benchmark.
     model = WhisperModel(
         "base.en",
         device="cpu",
@@ -166,22 +171,22 @@ def transcribe(audio):
         whisper_start = time.time()
 
         with suppress_stderr():
+            # Transcription parameters tuned for real-time wake-word flow.
+            # base.en with greedy decoding + VAD filter = ~2 sec latency.
             segments, info = model.transcribe(
                 audio_16k,
                 language="en",
-                # Greedy decoding is much faster than beam_size=5
-                # and is usually sufficient for short commands.
+                # Greedy decoding (beam_size=1) is much faster than beam_size=5
+                # and is sufficient for short voice commands.
                 beam_size=1,
-                # Do not let text from a prior segment influence
-                # a new short command.
+                # Prevent prior context bleeding into new commands.
                 condition_on_previous_text=False,
-                # Let faster-whisper remove extended silence before
-                # decoding. This helps prevent long stalls on empty
-                # or mostly silent recordings.
+                # VAD: Remove extended silence, speeds up decoding.
+                # Tuned for base.en to reduce false positives on ambient noise.
                 vad_filter=True,
                 vad_parameters={
-                    "min_silence_duration_ms": 500,
-                    "speech_pad_ms": 200,
+                    "min_silence_duration_ms": 500,  # Silence threshold
+                    "speech_pad_ms": 200,  # Buffer around speech
                 },
             )
 
