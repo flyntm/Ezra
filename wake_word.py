@@ -22,19 +22,43 @@ CHANNELS = 1
 BLOCK_SIZE = 1024
 
 # Wake-word sensitivity
-THRESHOLD = 0.15
+THRESHOLD = 0.10
 REARM_THRESHOLD = 0.05
 
+# Guard noisy stop-model spikes by requiring sustained confidence.
+STOP_GUARD_THRESHOLD = 0.80
+STOP_GUARD_HITS = 3
+
 # Small delay after the score first crosses the threshold.
-WAKE_CONFIRM_DELAY = 0.10
+WAKE_CONFIRM_DELAY = 0.05
 
 # Audio returned with the detected wake word.
 # Increase slightly to preserve more pre-wake audio across the handoff.
-RECENT_AUDIO_SECONDS = 2.5
+RECENT_AUDIO_SECONDS = 16.0
 # Keep a small prebuffer of command audio around the wake word.
-PREBUFFER_SECONDS = 0.80
-# Continue capturing briefly after detecting the wake word.
-POST_WAKE_AUDIO_SECONDS = 0.80
+PREBUFFER_SECONDS = 1.10
+
+# Capture command audio from the same stream that detected wake.
+# This avoids close/reopen handoff clipping between Wake and Listen.
+CONTINUOUS_CAPTURE_AFTER_WAKE = True
+
+# Continuous capture command boundary settings.
+COMMAND_TIMEOUT = 5.0
+MAX_COMMAND_TIME = 10.0
+ACTIVE_RMS_THRESHOLD = 0.0055
+END_SILENCE = 0.95
+END_POST_ROLL_SECONDS = 0.60
+SEED_ACTIVITY_WINDOW_SECONDS = 0.35
+
+# Post-wake capture windows for different wake phrases.
+POST_WAKE_AUDIO_SECONDS_EZRA = 1.10
+POST_WAKE_AUDIO_SECONDS_HEY_EZRA = 1.35
+
+# Trim the first part of the post-wake tail based on wake phrase length.
+# These trims remove wake-word syllables from the handoff clip while
+# keeping immediate command speech in no-pause scenarios.
+WAKE_TAIL_TRIM_SECONDS_EZRA = 0.00
+WAKE_TAIL_TRIM_SECONDS_HEY_EZRA = 0.00
 
 # Testing value. Change to 180 later.
 SLEEP_TIMEOUT = 20
@@ -43,7 +67,7 @@ SLEEP_TIMEOUT = 20
 # between Listen and Wake.
 MIC_OPEN_RETRIES = 8
 MIC_RETRY_DELAY = 0.25
-MIC_RELEASE_DELAY = 0.25
+MIC_RELEASE_DELAY = 0.08
 
 
 # =========================
@@ -103,6 +127,18 @@ def get_buffer_in_order(buffer, start_idx, count):
         if end_idx == 0:
             return buffer.copy()
         return np.concatenate([buffer[end_idx:], buffer[:end_idx]])
+
+    if start_idx < end_idx:
+        return buffer[start_idx:end_idx].copy()
+
+    return np.concatenate([buffer[start_idx:], buffer[:end_idx]])
+
+
+def get_new_buffer_samples(buffer, start_idx, end_idx):
+    """Return samples between two circular-buffer indices."""
+
+    if start_idx == end_idx:
+        return np.empty((0,), dtype=buffer.dtype)
 
     if start_idx < end_idx:
         return buffer[start_idx:end_idx].copy()
@@ -295,6 +331,7 @@ def run(return_audio=False):
     pending_phrase = None
 
     history = deque(maxlen=4)
+    stop_history = deque(maxlen=STOP_GUARD_HITS)
 
     audio_buffer = np.zeros(
         buffer_size,
@@ -318,6 +355,100 @@ def run(return_audio=False):
     )
 
     model.predict(flush_audio)
+
+    def capture_command_same_stream(seed_audio):
+        """
+        Capture command audio from the already-open wake stream.
+
+        Always seeds with the full wake handoff clip so no speech
+        is lost regardless of pause length. Polls the live circular
+        buffer until silence, then returns all audio for STT.
+        Wake-word tokens in the transcript are stripped in main.
+        """
+
+        frames = []
+        seed_tail_rms = 0.0
+        seed_arr = None
+
+        if seed_audio is not None and len(seed_audio) > 0:
+            seed_arr = np.asarray(seed_audio, dtype=np.float32)
+            frames.append(seed_arr)
+
+            tail_samples = int(SEED_ACTIVITY_WINDOW_SECONDS * SAMPLE_RATE)
+            seed_tail = seed_arr[-tail_samples:] if tail_samples > 0 else seed_arr
+
+            if seed_tail.size > 0:
+                seed_tail_rms = float(np.sqrt(np.mean(seed_tail**2)))
+
+        last_idx = recent_buffer_idx
+        last_active_time = None
+        start_time = time.time()
+
+        if seed_tail_rms >= ACTIVE_RMS_THRESHOLD:
+            last_active_time = start_time
+            print(f"🎤 Seed tail active (rms={seed_tail_rms:.4f})")
+
+        while True:
+            time.sleep(0.02)
+
+            current_idx = recent_buffer_idx
+            new_chunk = get_new_buffer_samples(
+                recent_audio_buffer,
+                last_idx,
+                current_idx,
+            )
+            last_idx = current_idx
+
+            chunk_rms = 0.0
+            if new_chunk.size > 0:
+                frames.append(new_chunk.astype(np.float32, copy=False))
+                chunk_rms = float(np.sqrt(np.mean(new_chunk**2)))
+
+            now = time.time()
+
+            if chunk_rms >= ACTIVE_RMS_THRESHOLD:
+                if last_active_time is None:
+                    print("🎤 Command speech detected")
+                last_active_time = now
+            elif last_active_time is None:
+                # No speech seen yet — wait up to COMMAND_TIMEOUT.
+                if now - start_time >= COMMAND_TIMEOUT:
+                    if seed_arr is not None and seed_arr.size > 0:
+                        print(
+                            "⚠️ No post-wake speech detected within timeout — "
+                            "using wake handoff audio"
+                        )
+                        return seed_arr.astype(np.float32, copy=False)
+
+                    print("⚠️ No command speech detected within timeout")
+                    return None
+            elif now - last_active_time >= END_SILENCE:
+                post_roll_until = now + END_POST_ROLL_SECONDS
+
+                while time.time() < post_roll_until:
+                    time.sleep(0.02)
+                    current_idx = recent_buffer_idx
+                    post_chunk = get_new_buffer_samples(
+                        recent_audio_buffer,
+                        last_idx,
+                        current_idx,
+                    )
+                    last_idx = current_idx
+
+                    if post_chunk.size > 0:
+                        frames.append(post_chunk.astype(np.float32, copy=False))
+
+                print("🛑 Command ended after silence")
+                break
+
+            if now - start_time >= MAX_COMMAND_TIME:
+                print("⚠️ Maximum command time reached")
+                break
+
+        if not frames:
+            return None
+
+        return np.concatenate(frames, axis=0).astype(np.float32, copy=False)
 
     print("\n✅ Ready")
     print("\n👂 Listening for wake words...\n")
@@ -368,6 +499,11 @@ def run(return_audio=False):
             stop_score = float(predictions.get("ezra_stop", 0.0))
             ezzera_score = float(predictions.get("ezzera", 0.0))
 
+            stop_history.append(stop_score >= STOP_GUARD_THRESHOLD)
+            stop_guard_active = len(stop_history) == STOP_GUARD_HITS and all(
+                stop_history
+            )
+
             # The Ezra and Ezzera models both count as "Ezra."
             ezra_combined = max(
                 ezra_score,
@@ -391,7 +527,8 @@ def run(return_audio=False):
                     f"🎧 ezra: {ezra_score:.3f} | "
                     f"hey_ezra: {hey_ezra_score:.3f} | "
                     f"ezzera: {ezzera_score:.3f} | "
-                    f"stop: {stop_score:.3f}"
+                    f"stop: {stop_score:.3f} "
+                    f"(guard={'ON' if stop_guard_active else 'off'})"
                 )
 
             # Start a pending wake detection.
@@ -415,22 +552,36 @@ def run(return_audio=False):
 
                     phrase = handle_wake_word(pending_phrase)
 
-                    # Keep the Wake stream open briefly to capture the beginning
-                    # of a command spoken immediately after the wake phrase.
-                    time.sleep(POST_WAKE_AUDIO_SECONDS)
+                    # Use different capture and trim values for the short and long wake phrases.
+                    if phrase == "hey ezra":
+                        post_wake_audio_seconds = POST_WAKE_AUDIO_SECONDS_HEY_EZRA
+                        wake_tail_trim_seconds = WAKE_TAIL_TRIM_SECONDS_HEY_EZRA
+                    else:
+                        post_wake_audio_seconds = POST_WAKE_AUDIO_SECONDS_EZRA
+                        wake_tail_trim_seconds = WAKE_TAIL_TRIM_SECONDS_EZRA
+
+                    time.sleep(post_wake_audio_seconds)
+
+                    # Include a small pre-detection span plus post-wake span so
+                    # continuous speech like "ezra what time..." keeps the first word.
+                    handoff_seconds = PREBUFFER_SECONDS + post_wake_audio_seconds
 
                     wake_audio = get_buffer_in_order(
                         recent_audio_buffer,
                         recent_buffer_idx,
                         min(
                             recent_buffer_len,
-                            int(POST_WAKE_AUDIO_SECONDS * SAMPLE_RATE),
+                            int(handoff_seconds * SAMPLE_RATE),
                         ),
                     )
-                    if len(wake_audio) > 0:
-                        trim_samples = int(0.20 * SAMPLE_RATE)
-                        if len(wake_audio) > trim_samples:
-                            wake_audio = wake_audio[trim_samples:]
+
+                    trim_samples = int(wake_tail_trim_seconds * SAMPLE_RATE)
+                    if len(wake_audio) > trim_samples:
+                        wake_audio = wake_audio[trim_samples:]
+                        print(
+                            f"✂️ Trimmed {wake_tail_trim_seconds:.2f} sec from wake handoff"
+                        )
+
                     print(
                         f"📼 Captured {len(wake_audio)/SAMPLE_RATE:.2f} sec of post-wake audio"
                     )
@@ -445,6 +596,10 @@ def run(return_audio=False):
                     )
 
                     if return_audio:
+                        if CONTINUOUS_CAPTURE_AFTER_WAKE:
+                            command_audio = capture_command_same_stream(wake_audio)
+                            return phrase, command_audio
+
                         return phrase, wake_audio
 
                     return phrase

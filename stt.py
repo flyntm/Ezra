@@ -176,6 +176,10 @@ def transcribe(audio):
             segments, info = model.transcribe(
                 audio_16k,
                 language="en",
+                # Bias decoding toward a short voice command following the
+                # wake phrase, which helps reduce "here's what" style
+                # hallucinations from wake-word audio.
+                initial_prompt="A short spoken home assistant command after the wake word Ezra.",
                 # Greedy decoding (beam_size=1) is much faster than beam_size=5
                 # and is sufficient for short voice commands.
                 beam_size=1,
