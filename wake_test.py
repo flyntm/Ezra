@@ -1,6 +1,10 @@
+import os
 import numpy as np
 import sounddevice as sd
 import time
+
+os.environ.setdefault("ORT_LOG_SEVERITY_LEVEL", "3")
+
 from openwakeword.model import Model
 from collections import deque
 

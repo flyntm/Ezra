@@ -1,3 +1,5 @@
+import contextlib
+import os
 import sys
 import time
 from collections import deque
@@ -5,7 +7,6 @@ from collections import deque
 import numpy as np
 import sounddevice as sd
 import usb.core
-from openwakeword.model import Model
 
 from robot import eyelids
 from robot import eyes
@@ -24,6 +25,14 @@ BLOCK_SIZE = 1024
 # Wake-word sensitivity
 THRESHOLD = 0.10
 REARM_THRESHOLD = 0.05
+
+# Phrase disambiguation between "EZRA" and "HEY EZRA".
+# OpenWakeWord can over-score "hey_ezra" for plain "ezra" utterances,
+# so prefer EZRA when Ezra-family confidence is already meaningful.
+HEY_EZRA_MIN_SCORE = 0.55
+HEY_EZRA_DOMINANCE_MARGIN = 0.12
+EZRA_PREFERENCE_FLOOR = 0.18
+FORCE_HEY_EZRA_SCORE = 0.985
 
 # Guard noisy stop-model spikes by requiring sustained confidence.
 STOP_GUARD_THRESHOLD = 0.80
@@ -92,15 +101,35 @@ print("✅ ReSpeaker Connected")
 # MODEL
 # =========================
 
-model = Model(
-    wakeword_models=[
-        "/home/flyntm/projects/ezra/ezra.onnx",
-        "/home/flyntm/projects/ezra/hey_ezra.onnx",
-        "/home/flyntm/projects/ezra/ezra_stop.onnx",
-        "/home/flyntm/projects/ezra/ezzera.onnx",
-    ],
-    inference_framework="onnx",
-)
+
+@contextlib.contextmanager
+def suppress_stderr():
+    """Temporarily silence native library warnings written to stderr."""
+
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    old_stderr = os.dup(2)
+
+    try:
+        os.dup2(devnull, 2)
+        yield
+    finally:
+        os.dup2(old_stderr, 2)
+        os.close(old_stderr)
+        os.close(devnull)
+
+
+with suppress_stderr():
+    from openwakeword.model import Model
+
+    model = Model(
+        wakeword_models=[
+            "/home/flyntm/projects/ezra/ezra.onnx",
+            "/home/flyntm/projects/ezra/hey_ezra.onnx",
+            "/home/flyntm/projects/ezra/ezra_stop.onnx",
+            "/home/flyntm/projects/ezra/ezzera.onnx",
+        ],
+        inference_framework="onnx",
+    )
 
 print("Loaded models:", model.models.keys())
 
@@ -510,12 +539,23 @@ def run(return_audio=False):
                 ezzera_score,
             )
 
-            wake_score = ezra_combined
+            # Disambiguate wake phrase labels so plain "ezra" is not
+            # frequently tagged as "hey ezra" by model-score noise.
             detected_phrase = "EZRA"
 
-            if hey_ezra_score > wake_score:
-                wake_score = hey_ezra_score
+            hey_is_strong = hey_ezra_score >= HEY_EZRA_MIN_SCORE
+            hey_is_dominant = (
+                hey_ezra_score - ezra_combined
+            ) >= HEY_EZRA_DOMINANCE_MARGIN
+            ezra_is_meaningful = ezra_combined >= EZRA_PREFERENCE_FLOOR
+            force_hey = hey_ezra_score >= FORCE_HEY_EZRA_SCORE
+
+            if force_hey or (
+                hey_is_strong and hey_is_dominant and not ezra_is_meaningful
+            ):
                 detected_phrase = "HEY EZRA"
+
+            wake_score = max(ezra_combined, hey_ezra_score)
 
             history.append(wake_score)
             peak_score = max(history)
@@ -539,6 +579,9 @@ def run(return_audio=False):
 
             # Confirm the pending detection.
             if pending_wake:
+                # Keep the pending phrase updated with the freshest frame.
+                pending_phrase = detected_phrase
+
                 if current_time - pending_wake_time >= WAKE_CONFIRM_DELAY:
                     pending_wake = False
                     armed = False

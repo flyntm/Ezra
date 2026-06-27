@@ -1,4 +1,7 @@
 {
   "python.defaultInterpreterPath": "/home/flyntm/projects/ezra/ezra311-env/bin/python",
-  "python.terminal.activateEnvironment": true
+  "python.terminal.activateEnvironment": true,
+  "python.analysis.extraPaths": [
+    "/home/flyntm/reSpeaker_XVF3800_USB_4MIC_ARRAY/python_control"
+  ]
 }

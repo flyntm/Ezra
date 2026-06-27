@@ -38,6 +38,15 @@ WAKE_WORDS = {
     "you",
 }
 
+# Common tokens that appear as the second word in a mangled "hey ezra".
+WAKE_SECOND_WORD_VARIANTS = WAKE_WORDS | {
+    "there",
+    "theres",
+    "thereis",
+    "here",
+    "heres",
+}
+
 
 # Convert GPT emotion names to Ezra emotion names.
 EMOTION_MAP = {
@@ -172,17 +181,28 @@ def strip_wake_word(text):
 
     words = text.split()
 
-    # Whisper can hallucinate "hey ezra" as "here's what".
-    if len(words) >= 2 and words[0] == "heres" and words[1] == "what":
-        words = words[2:]
+    # Strip wake prefix up to twice to handle repeated/misheard wake phrases.
+    for _ in range(2):
+        # Whisper can hallucinate "hey ezra" as "here's what".
+        if len(words) >= 2 and words[0] == "heres" and words[1] == "what":
+            words = words[2:]
+            continue
 
-    # Remove "Hey Ezra" together.
-    if len(words) >= 2 and words[0] == "hey" and words[1] in WAKE_WORDS:
-        words = words[2:]
+        # Remove "Hey Ezra" and common near-matches like "hey theres".
+        if (
+            len(words) >= 2
+            and words[0] == "hey"
+            and words[1] in WAKE_SECOND_WORD_VARIANTS
+        ):
+            words = words[2:]
+            continue
 
-    # Remove a single wake word.
-    elif words and words[0] in WAKE_WORDS:
-        words = words[1:]
+        # Remove a single wake word.
+        if words and words[0] in WAKE_WORDS:
+            words = words[1:]
+            continue
+
+        break
 
     return " ".join(words).strip()
 
@@ -197,6 +217,10 @@ def is_wake_word_only(command):
         "here's",
         "heres",
         "heres what",
+        "hey there",
+        "hey theres",
+        "hey here",
+        "hey heres",
         "ezra",
         "edra",
         "hey ezra",
@@ -216,7 +240,7 @@ def handle_local_command(command):
 
     text_lower = command.lower()
 
-    if "what time" in text_lower:
+    if "what time" in text_lower or "time is it" in text_lower:
         now = datetime.now().strftime("%I:%M %p")
         speak(f"It is {now}")
         reset_idle_timer()

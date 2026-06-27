@@ -1,3 +1,4 @@
+import os
 import sys
 import time
 import queue
@@ -6,6 +7,9 @@ import wave
 import numpy as np
 import sounddevice as sd
 import usb.core
+
+os.environ.setdefault("ORT_LOG_SEVERITY_LEVEL", "3")
+
 from openwakeword.model import Model
 
 # --------------------------------------------------
