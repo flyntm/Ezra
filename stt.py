@@ -7,11 +7,13 @@ import numpy as np
 import scipy.io.wavfile as wav
 from faster_whisper import WhisperModel
 
+from config import DEBUG_AUDIO_SAMPLE_RATE, DEBUG_WAV_FILE
+
 # --------------------------------------------------
 # CONFIG
 # --------------------------------------------------
 
-SAMPLE_RATE = 16000
+SAMPLE_RATE = DEBUG_AUDIO_SAMPLE_RATE
 
 # Tuned for base.en Whisper model (fast, ~80M params).
 # These thresholds balance filtering out noise/silence
@@ -20,9 +22,6 @@ MIN_AUDIO_SECONDS = 0.75  # Minimum command duration (0.75 sec)
 MIN_AUDIO_PEAK = 0.008  # Minimum peak amplitude to transcribe
 
 TEMP_WAV_FILE = "temp.wav"
-DEBUG_WAV_FILE = "/tmp/whisper_input.wav"
-
-
 # --------------------------------------------------
 # STDERR SUPPRESSION
 # --------------------------------------------------
@@ -173,7 +172,7 @@ def transcribe(audio):
         with suppress_stderr():
             # Transcription parameters tuned for real-time wake-word flow.
             # base.en with greedy decoding + VAD filter = ~2 sec latency.
-            segments, info = model.transcribe(
+            segments, _ = model.transcribe(
                 audio_16k,
                 language="en",
                 # Bias decoding toward a short voice command following the

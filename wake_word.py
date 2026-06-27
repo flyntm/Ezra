@@ -1,100 +1,58 @@
 import contextlib
 import os
-import sys
 import time
 from collections import deque
 
 import numpy as np
 import sounddevice as sd
-import usb.core
+
+from config import (
+    CONTINUOUS_CAPTURE_AFTER_WAKE,
+    EZRA_PREFERENCE_FLOOR,
+    FORCE_HEY_EZRA_SCORE,
+    HEY_EZRA_DOMINANCE_MARGIN,
+    HEY_EZRA_MIN_SCORE,
+    POST_WAKE_AUDIO_SECONDS_EZRA,
+    POST_WAKE_AUDIO_SECONDS_HEY_EZRA,
+    PREBUFFER_SECONDS,
+    RECENT_AUDIO_SECONDS,
+    SEED_ACTIVITY_WINDOW_SECONDS,
+    SLEEP_TIMEOUT,
+    STOP_GUARD_HITS,
+    STOP_GUARD_THRESHOLD,
+    WAKE_BLOCK_SIZE as BLOCK_SIZE,
+    WAKE_CHANNELS as CHANNELS,
+    WAKE_COMMAND_TIMEOUT as COMMAND_TIMEOUT,
+    WAKE_CONFIRM_DELAY,
+    WAKE_END_POST_ROLL_SECONDS as END_POST_ROLL_SECONDS,
+    WAKE_END_SILENCE as END_SILENCE,
+    WAKE_ACTIVE_RMS_THRESHOLD as ACTIVE_RMS_THRESHOLD,
+    WAKE_MAX_COMMAND_TIME as MAX_COMMAND_TIME,
+    WAKE_MIC_DEVICE as MIC_DEVICE,
+    WAKE_MIC_OPEN_RETRIES as MIC_OPEN_RETRIES,
+    WAKE_MIC_RELEASE_DELAY as MIC_RELEASE_DELAY,
+    WAKE_MIC_RETRY_DELAY as MIC_RETRY_DELAY,
+    WAKE_REARM_THRESHOLD as REARM_THRESHOLD,
+    WAKE_SAMPLE_RATE as SAMPLE_RATE,
+    WAKE_TAIL_TRIM_SECONDS_EZRA,
+    WAKE_TAIL_TRIM_SECONDS_HEY_EZRA,
+    WAKE_THRESHOLD as THRESHOLD,
+    QUIET_STARTUP,
+)
+from respeaker_io import create_respeaker_or_raise
 
 from robot import eyelids
 from robot import eyes
 from robot import robot_emotions
 
 # =========================
-# CONFIG
-# =========================
-
-MIC_DEVICE = 1
-
-SAMPLE_RATE = 16000
-CHANNELS = 1
-BLOCK_SIZE = 1024
-
-# Wake-word sensitivity
-THRESHOLD = 0.10
-REARM_THRESHOLD = 0.05
-
-# Phrase disambiguation between "EZRA" and "HEY EZRA".
-# OpenWakeWord can over-score "hey_ezra" for plain "ezra" utterances,
-# so prefer EZRA when Ezra-family confidence is already meaningful.
-HEY_EZRA_MIN_SCORE = 0.55
-HEY_EZRA_DOMINANCE_MARGIN = 0.12
-EZRA_PREFERENCE_FLOOR = 0.18
-FORCE_HEY_EZRA_SCORE = 0.985
-
-# Guard noisy stop-model spikes by requiring sustained confidence.
-STOP_GUARD_THRESHOLD = 0.80
-STOP_GUARD_HITS = 3
-
-# Small delay after the score first crosses the threshold.
-WAKE_CONFIRM_DELAY = 0.05
-
-# Audio returned with the detected wake word.
-# Increase slightly to preserve more pre-wake audio across the handoff.
-RECENT_AUDIO_SECONDS = 16.0
-# Keep a small prebuffer of command audio around the wake word.
-PREBUFFER_SECONDS = 1.10
-
-# Capture command audio from the same stream that detected wake.
-# This avoids close/reopen handoff clipping between Wake and Listen.
-CONTINUOUS_CAPTURE_AFTER_WAKE = True
-
-# Continuous capture command boundary settings.
-COMMAND_TIMEOUT = 5.0
-MAX_COMMAND_TIME = 10.0
-ACTIVE_RMS_THRESHOLD = 0.0055
-END_SILENCE = 0.95
-END_POST_ROLL_SECONDS = 0.60
-SEED_ACTIVITY_WINDOW_SECONDS = 0.35
-
-# Post-wake capture windows for different wake phrases.
-POST_WAKE_AUDIO_SECONDS_EZRA = 1.10
-POST_WAKE_AUDIO_SECONDS_HEY_EZRA = 1.35
-
-# Trim the first part of the post-wake tail based on wake phrase length.
-# These trims remove wake-word syllables from the handoff clip while
-# keeping immediate command speech in no-pause scenarios.
-WAKE_TAIL_TRIM_SECONDS_EZRA = 0.00
-WAKE_TAIL_TRIM_SECONDS_HEY_EZRA = 0.00
-
-# Testing value. Change to 180 later.
-SLEEP_TIMEOUT = 20
-
-# Direct ALSA device 1 may remain busy briefly while switching
-# between Listen and Wake.
-MIC_OPEN_RETRIES = 8
-MIC_RETRY_DELAY = 0.25
-MIC_RELEASE_DELAY = 0.08
-
-
-# =========================
 # RESPEAKER
 # =========================
 
-sys.path.append("/home/flyntm/reSpeaker_XVF3800_USB_4MIC_ARRAY/python_control")
+mic = create_respeaker_or_raise()
 
-from xvf_host import ReSpeaker
-
-dev = usb.core.find(idVendor=0x2886)
-
-if not dev:
-    raise RuntimeError("❌ ReSpeaker not found")
-
-mic = ReSpeaker(dev)
-
-print("✅ ReSpeaker Connected")
+if not QUIET_STARTUP:
+    print("✅ ReSpeaker Connected")
 
 
 # =========================
@@ -131,7 +89,8 @@ with suppress_stderr():
         inference_framework="onnx",
     )
 
-print("Loaded models:", model.models.keys())
+if not QUIET_STARTUP:
+    print("Loaded models:", model.models.keys())
 
 
 # =========================

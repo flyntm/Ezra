@@ -1,18 +1,14 @@
-import string
 from datetime import datetime
-import os
-import sys
-
-import numpy as np
-import sounddevice as sd
-import scipy.io.wavfile as wav
 
 import state
 
 from audio import listen
+from audio_debug import playback_diagnostic, save_debug_wav
+from command_normalization import is_wake_word_only, strip_wake_word
 from config import *
 from ezra_brain import ask_ezra
 from ezra_emotion import set_emotion
+from live_info import get_live_info_response
 from stt import transcribe
 from tts import speak
 from wake_word import (
@@ -25,30 +21,7 @@ from wake_word import (
 # No external API dependency or cost. compare_stt.py can benchmark
 # against online models if needed.
 
-# Common Whisper misinterpretations of "Ezra."
-WAKE_WORDS = {
-    "ezra",
-    "zra",
-    "ra",
-    "edra",
-    "extra",
-    "israel",
-    "ezrah",
-    "ez",
-    "you",
-}
-
-# Common tokens that appear as the second word in a mangled "hey ezra".
-WAKE_SECOND_WORD_VARIANTS = WAKE_WORDS | {
-    "there",
-    "theres",
-    "thereis",
-    "here",
-    "heres",
-}
-
-
-# Convert GPT emotion names to Ezra emotion names.
+# Convert GnPT emotion names to Ezra emotion names.
 EMOTION_MAP = {
     "neutral": "listening",
     "happy": "happy",
@@ -59,176 +32,16 @@ EMOTION_MAP = {
 }
 
 
-def log_audio_stats(label, audio, sample_rate=16000):
-    """Print compact duration/level stats for captured audio."""
+def maybe_playback_diagnostic(debug_audio=None):
+    """Run optional playback diagnostics when enabled in config."""
 
-    if audio is None:
-        print(f"🧪 {label}: none")
+    if not ENABLE_PLAYBACK_DIAGNOSTICS:
         return
 
-    arr = np.asarray(audio, dtype=np.float32).flatten()
+    if debug_audio is not None:
+        save_debug_wav(debug_audio)
 
-    if arr.size == 0:
-        print(f"🧪 {label}: empty")
-        return
-
-    duration = arr.size / float(sample_rate)
-    peak = float(np.max(np.abs(arr)))
-    rms = float(np.sqrt(np.mean(arr**2)))
-
-    print(f"🧪 {label}: duration={duration:.2f}s " f"peak={peak:.4f} rms={rms:.4f}")
-
-
-def save_debug_wav(audio, sample_rate=16000, debug_wav="/tmp/whisper_input.wav"):
-    """Save captured audio as debug WAV normalized to peak 0.9 for consistent playback."""
-
-    if audio is None:
-        return
-
-    arr = np.asarray(audio, dtype=np.float32).flatten()
-
-    if arr.size == 0:
-        return
-
-    # Normalize to peak 0.9 like STT does.
-    peak = float(np.max(np.abs(arr)))
-    if peak > 0:
-        gain = 0.9 / peak
-        arr = np.clip(arr * gain, -1.0, 1.0)
-
-    # Write as 16-bit PCM.
-    arr_int16 = np.int16(np.clip(arr * 32767.0, -32768, 32767))
-    wav.write(debug_wav, sample_rate, arr_int16)
-
-
-def get_single_key():
-    """Read a single key press without requiring Enter (Unix/Linux)."""
-    try:
-        import tty
-        import termios
-
-        fd = sys.stdin.fileno()
-        old_settings = termios.tcgetattr(fd)
-        try:
-            tty.setraw(sys.stdin.fileno())
-            ch = sys.stdin.read(1)
-        finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-        return ch.lower()
-    except Exception:
-        # Fallback if tty/termios unavailable.
-        return input().lower()
-
-
-def playback_diagnostic():
-    """Auto-play the STT debug WAV file with optional repeat."""
-
-    debug_wav = "/tmp/whisper_input.wav"
-
-    if not os.path.isfile(debug_wav):
-        print("🧪 No debug WAV found")
-        return
-
-    try:
-        sample_rate, data = wav.read(debug_wav)
-    except Exception as e:
-        print(f"⚠️ Failed to read debug WAV: {e}")
-        return
-
-    print("\n🧪 Playback diagnostic")
-    print("🧪 Playing recorded command...")
-
-    try:
-        sd.play(data, sample_rate)
-        sd.wait()
-        print("🧪 Playback finished")
-    except Exception as e:
-        print(f"⚠️ Playback failed: {e}")
-        return
-
-    # Repeat loop with single-key input.
-    while True:
-        print("🧪 Play again? [y/n]: ", end="", flush=True)
-        try:
-            ch = get_single_key()
-            print(ch)  # Echo the key press
-        except (EOFError, KeyboardInterrupt):
-            print()
-            break
-
-        if ch not in {"y", "yes"}:
-            break
-
-        try:
-            sd.play(data, sample_rate)
-            sd.wait()
-            print("🧪 Playback finished")
-        except Exception as e:
-            print(f"⚠️ Playback failed: {e}")
-            break
-
-
-def strip_wake_word(text):
-    """Remove the wake word from recognized text."""
-
-    if not text:
-        return ""
-
-    # Normalize the text.
-    text = text.lower()
-    text = text.translate(str.maketrans("", "", string.punctuation))
-    text = text.strip()
-
-    words = text.split()
-
-    # Strip wake prefix up to twice to handle repeated/misheard wake phrases.
-    for _ in range(2):
-        # Whisper can hallucinate "hey ezra" as "here's what".
-        if len(words) >= 2 and words[0] == "heres" and words[1] == "what":
-            words = words[2:]
-            continue
-
-        # Remove "Hey Ezra" and common near-matches like "hey theres".
-        if (
-            len(words) >= 2
-            and words[0] == "hey"
-            and words[1] in WAKE_SECOND_WORD_VARIANTS
-        ):
-            words = words[2:]
-            continue
-
-        # Remove a single wake word.
-        if words and words[0] in WAKE_WORDS:
-            words = words[1:]
-            continue
-
-        break
-
-    return " ".join(words).strip()
-
-
-def is_wake_word_only(command):
-    """Check whether the recording contains only a wake phrase."""
-
-    normalized = command.lower().strip()
-
-    return normalized in {
-        "",
-        "here's",
-        "heres",
-        "heres what",
-        "hey there",
-        "hey theres",
-        "hey here",
-        "hey heres",
-        "ezra",
-        "edra",
-        "hey ezra",
-        "hey edra",
-        "extra",
-        "israel",
-        "ezrah",
-    }
+    playback_diagnostic()
 
 
 def handle_local_command(command):
@@ -243,6 +56,12 @@ def handle_local_command(command):
     if "what time" in text_lower or "time is it" in text_lower:
         now = datetime.now().strftime("%I:%M %p")
         speak(f"It is {now}")
+        reset_idle_timer()
+        return True
+
+    live_info_response = get_live_info_response(text_lower)
+    if live_info_response:
+        speak(live_info_response)
         reset_idle_timer()
         return True
 
@@ -301,8 +120,7 @@ def main():
 
                 if audio is None:
                     if wake_audio is not None:
-                        save_debug_wav(wake_audio)
-                        playback_diagnostic()
+                        maybe_playback_diagnostic(wake_audio)
 
                     print("⏱️ Timeout waiting for command")
                     continue
@@ -326,7 +144,7 @@ def main():
                 # Supports wake detection returning a full command.
                 print(f"⚡ Direct command: {command}")
                 # Save wake audio as debug WAV so playback diagnostic works.
-                save_debug_wav(wake_audio)
+                maybe_playback_diagnostic(wake_audio)
 
             # Ignore empty or unclear commands.
             if len(command) < 2:
@@ -345,7 +163,7 @@ def main():
             # Handle simple commands locally.
             if handle_local_command(command):
                 # Run optional audio replay diagnostics after Ezra responds.
-                playback_diagnostic()
+                maybe_playback_diagnostic()
                 continue
 
             # Send all other commands to Ezra's brain.
@@ -383,7 +201,7 @@ def main():
             speak(response)
 
             # Run optional audio replay diagnostics after Ezra responds.
-            playback_diagnostic()
+            maybe_playback_diagnostic()
 
             reset_idle_timer()
 

@@ -6,6 +6,7 @@ import tty
 import time
 import board
 import neopixel
+from config import QUIET_STARTUP
 from robot import servos
 from robot import eyes
 from robot import eyelids
@@ -32,7 +33,7 @@ def init_neopixel(silent=False):
         return True
 
     try:
-        if not silent:
+        if not silent and not QUIET_STARTUP:
             print("[testmode] Initializing Neopixel on GPIO13...")
         pixels = neopixel.NeoPixel(
             LED_PIN,
@@ -43,7 +44,7 @@ def init_neopixel(silent=False):
         )
         neopixel_ready = True
         clear_neopixel(silent=True)
-        if not silent:
+        if not silent and not QUIET_STARTUP:
             print("[testmode] Neopixel initialized successfully on GPIO13")
             print("[testmode] LEDs initialized OFF")
         return True

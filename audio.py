@@ -1,138 +1,34 @@
-import sys
 import time
 import queue
 from collections import deque
 
 import numpy as np
 import sounddevice as sd
-import usb.core
 
-# --------------------------------------------------
-# CONFIG
-# --------------------------------------------------
-
-MIC_DEVICE = 1
-
-SAMPLE_RATE = 16000
-CHANNELS = 1
-BLOCKSIZE = 1024
-MIC_DEVICE = 1
-
-# How long Ezra waits for you to begin the command
-# after it prints "Ready for command."
-COMMAND_TIMEOUT = 5.0
-
-# Maximum duration of the spoken command itself
-MAX_COMMAND_TIME = 10.0
-
-# After wake word, silence before accepting command (if not continuous).
-ARM_SILENCE = 0.10
-ARM_THRESHOLD = 0.005
-
-# Require speech detection before declaring command start.
-START_THRESHOLD = 0.012
-START_CONFIRM_BLOCKS = 1
-
-# Preserve audio from before command confirmation.
-PREBUFFER_SECONDS = 0.80
-
-# Local rolling pre-roll inside listen() to preserve speech that begins
-# between wake handoff and command start detection.
-LISTEN_PRE_ROLL_SECONDS = 0.75
-
-# RMS thresholds for command boundary detection.
-START_RMS_THRESHOLD = 0.008
-ACTIVE_RMS_THRESHOLD = 0.0055
-
-# End command after sustained quiet (ReSpeaker VAD-driven).
-END_SILENCE = 0.95  # Silence duration to trigger end
-
-# Use block energy as a secondary silence signal so brief VAD dropouts
-# do not clip trailing words.
-END_RMS_THRESHOLD = 0.006
-END_POST_ROLL_SECONDS = 0.60
-
-# Direct ALSA devices can remain busy briefly while
-# switching between Wake and Listen.
-MIC_OPEN_RETRIES = 8
-MIC_RETRY_DELAY = 0.25
-MIC_RELEASE_DELAY = 0.08
-
+from config import (
+    LISTEN_ACTIVE_RMS_THRESHOLD as ACTIVE_RMS_THRESHOLD,
+    LISTEN_BLOCKSIZE as BLOCKSIZE,
+    LISTEN_CHANNELS as CHANNELS,
+    LISTEN_COMMAND_TIMEOUT as COMMAND_TIMEOUT,
+    LISTEN_END_POST_ROLL_SECONDS as END_POST_ROLL_SECONDS,
+    LISTEN_END_SILENCE as END_SILENCE,
+    LISTEN_MAX_COMMAND_TIME as MAX_COMMAND_TIME,
+    LISTEN_MIC_DEVICE as MIC_DEVICE,
+    LISTEN_PRE_ROLL_SECONDS,
+    LISTEN_SAMPLE_RATE as SAMPLE_RATE,
+    LISTEN_START_RMS_THRESHOLD as START_RMS_THRESHOLD,
+    QUIET_STARTUP,
+)
+from respeaker_io import create_respeaker_or_raise
 
 # --------------------------------------------------
 # RESPEAKER SETUP
 # --------------------------------------------------
 
-sys.path.append("/home/flyntm/reSpeaker_XVF3800_USB_4MIC_ARRAY/python_control")
+mic = create_respeaker_or_raise()
 
-from xvf_host import ReSpeaker
-
-dev = usb.core.find(idVendor=0x2886)
-
-if not dev:
-    raise RuntimeError("❌ ReSpeaker not found")
-
-mic = ReSpeaker(dev)
-
-print("✅ ReSpeaker hardware VAD ready")
-
-
-# --------------------------------------------------
-# HELPERS
-# --------------------------------------------------
-
-
-def read_vad():
-    """Return the ReSpeaker speech flag and direction of arrival."""
-
-    try:
-        doa = mic.read("DOA_VALUE")
-
-        if len(doa) >= 2:
-            angle = doa[0]
-            speech = bool(doa[1])
-            return speech, angle
-
-    except Exception as e:
-        print(f"VAD error: {e}")
-
-    return False, None
-
-
-def open_microphone():
-    """
-    Open the direct ReSpeaker ALSA device.
-
-    Wake and Listen use the same hardware device, so ALSA may need
-    a brief moment to release it while switching between streams.
-    """
-
-    last_error = None
-
-    for attempt in range(1, MIC_OPEN_RETRIES + 1):
-        try:
-            stream = sd.InputStream(
-                device=MIC_DEVICE,
-                samplerate=SAMPLE_RATE,
-                channels=CHANNELS,
-                dtype="float32",
-                blocksize=BLOCKSIZE,
-            )
-
-            stream.start()
-            return stream
-
-        except sd.PortAudioError as e:
-            last_error = e
-
-            if attempt < MIC_OPEN_RETRIES:
-                print(
-                    f"⚠️ Microphone busy — retrying "
-                    f"({attempt}/{MIC_OPEN_RETRIES})..."
-                )
-                time.sleep(MIC_RETRY_DELAY)
-
-    raise last_error
+if not QUIET_STARTUP:
+    print("✅ ReSpeaker hardware VAD ready")
 
 
 # --------------------------------------------------
