@@ -1,9 +1,9 @@
-0:center=68.0
-0:left=112.0
-0:right=18.0
-1:center=76.0
-1:up=48.0
-1:down=114.0
+0:center=88.0
+0:left=116.0
+0:right=60.0
+1:center=88.0
+1:up=114.0
+1:down=62.0
 3:center=86.0
 3:left=128.0
 3:right=14.0
@@ -12,8 +12,8 @@
 4:down=118.0
 2:center=92.0
 2:open=90.0
-2:wide_open=102.0
-2:closed=70.0
+2:wide_open=106.0
+2:closed=62.0
 5:center=86.0
 5:open=88.0
 5:wide_open=104.0

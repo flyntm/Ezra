@@ -11,6 +11,9 @@ ENABLE_PLAYBACK_DIAGNOSTICS = True
 # Enable live web lookups for weather/news style requests.
 ENABLE_LIVE_INFO = True
 
+# Enable voice stop detection while Ezra is currently speaking.
+ENABLE_MID_RESPONSE_STOP = True
+
 
 # =========================
 # AUDIO DEVICES
@@ -47,6 +50,21 @@ CHANNELS = 1
 
 # Clamp RMS values to avoid spikes
 RMS_CLAMP = 0.6
+
+# Model used to detect stop phrase during TTS playback.
+MID_RESPONSE_STOP_MODEL_PATH = "/home/flyntm/projects/ezra/ezra_stop.onnx"
+
+# Mid-response stop sensitivity while Ezra is speaking.
+# Lower threshold/fewer hits than wake-loop stop guard to compensate for
+# speaker echo and overlap during playback.
+MID_RESPONSE_STOP_GUARD_THRESHOLD = 0.32
+MID_RESPONSE_STOP_GUARD_HITS = 1
+
+# Boost microphone input used for stop detection while TTS is playing.
+MID_RESPONSE_STOP_MIC_GAIN = 4.0
+
+# Minimum rolling window length before running stop prediction.
+MID_RESPONSE_STOP_MIN_WINDOW_SECONDS = 0.20
 
 
 # =========================

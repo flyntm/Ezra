@@ -1,16 +1,21 @@
 # calibration.py — 4 eye servos + 2 eyelid servos (arrow keys for all)
 
 import json
+import os
 import time
 import sys
 import termios
 import tty
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(BASE_DIR)
+
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 from robot import servos
 from robot.constants import *
 
-import os
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CAL_FILE = os.path.join(BASE_DIR, "calibration.txt")
 JSON_CAL_FILE = os.path.join(BASE_DIR, "calibration.json")
 
