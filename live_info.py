@@ -1,5 +1,6 @@
 import re
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
 
 import requests
 
@@ -106,31 +107,65 @@ def get_weather_summary(command):
     )
 
 
+def _normalize_headline(title):
+    """Normalize headline text for simple cross-source dedupe."""
+
+    return re.sub(r"[^a-z0-9]+", " ", title.lower()).strip()
+
+
+def _get_feed_headlines(feed_url):
+    try:
+        response = requests.get(feed_url, timeout=LIVE_INFO_TIMEOUT_SECONDS)
+        response.raise_for_status()
+        root = ET.fromstring(response.content)
+    except Exception:
+        return None, []
+
+    channel = root.find("channel")
+    if channel is None:
+        return None, []
+
+    source = channel.findtext("title", default="the news").strip() or "the news"
+    items = channel.findall("item")
+
+    headlines = []
+    for item in items:
+        title = item.findtext("title", default="").strip()
+        if title:
+            headlines.append(title)
+
+    return source, headlines
+
+
 def get_news_summary():
-    for feed_url in NEWS_RSS_FEEDS:
-        try:
-            response = requests.get(feed_url, timeout=LIVE_INFO_TIMEOUT_SECONDS)
-            response.raise_for_status()
-            root = ET.fromstring(response.content)
-        except Exception:
+    seen_headlines = set()
+    source_summaries = []
+
+    with ThreadPoolExecutor(max_workers=len(NEWS_RSS_FEEDS)) as executor:
+        feed_results = list(executor.map(_get_feed_headlines, NEWS_RSS_FEEDS))
+
+    for source, headlines in feed_results:
+        unique_headlines = []
+
+        for title in headlines:
+            normalized_title = _normalize_headline(title)
+            if not normalized_title or normalized_title in seen_headlines:
+                continue
+
+            seen_headlines.add(normalized_title)
+            unique_headlines.append(title)
+
+            if len(unique_headlines) >= NEWS_HEADLINE_COUNT:
+                break
+
+        if not unique_headlines:
             continue
 
-        channel = root.find("channel")
-        if channel is None:
-            continue
+        joined = "; ".join(unique_headlines)
+        source_summaries.append(f"From {source}: {joined}")
 
-        source = channel.findtext("title", default="the news")
-        items = channel.findall("item")
-
-        headlines = []
-        for item in items[:NEWS_HEADLINE_COUNT]:
-            title = item.findtext("title", default="").strip()
-            if title:
-                headlines.append(title)
-
-        if headlines:
-            joined = "; ".join(headlines)
-            return f"Top headlines from {source}: {joined}."
+    if source_summaries:
+        return "Top headlines. " + ". ".join(source_summaries) + "."
 
     return "I couldn't fetch live news right now."
 

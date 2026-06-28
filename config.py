@@ -6,7 +6,7 @@
 QUIET_STARTUP = False
 
 # Toggle post-command audio replay diagnostics.
-ENABLE_PLAYBACK_DIAGNOSTICS = True
+ENABLE_PLAYBACK_DIAGNOSTICS = False
 
 # Enable live web lookups for weather/news style requests.
 ENABLE_LIVE_INFO = True
@@ -57,14 +57,26 @@ MID_RESPONSE_STOP_MODEL_PATH = "/home/flyntm/projects/ezra/ezra_stop.onnx"
 # Mid-response stop sensitivity while Ezra is speaking.
 # Lower threshold/fewer hits than wake-loop stop guard to compensate for
 # speaker echo and overlap during playback.
-MID_RESPONSE_STOP_GUARD_THRESHOLD = 0.32
+MID_RESPONSE_STOP_GUARD_THRESHOLD = 0.10
 MID_RESPONSE_STOP_GUARD_HITS = 1
 
+# Lower stop threshold while ReSpeaker hardware VAD sees active speech.
+MID_RESPONSE_STOP_VAD_ASSIST_THRESHOLD = 0.015
+
 # Boost microphone input used for stop detection while TTS is playing.
-MID_RESPONSE_STOP_MIC_GAIN = 4.0
+MID_RESPONSE_STOP_MIC_GAIN = 2.5
+
+# Normalize quiet mid-response stop audio toward this RMS before inference.
+MID_RESPONSE_STOP_TARGET_RMS = 0.08
 
 # Minimum rolling window length before running stop prediction.
 MID_RESPONSE_STOP_MIN_WINDOW_SECONDS = 0.20
+
+# How long TTS waits for the live stop listener to open before playback.
+MID_RESPONSE_STOP_READY_TIMEOUT = 1.0
+
+# Use ReSpeaker speech detection to assist "Ezra stop" while Ezra is talking.
+ENABLE_MID_RESPONSE_VAD_ASSIST = True
 
 
 # =========================
@@ -135,6 +147,9 @@ TTS_MODEL_PATH = "~/projects/piper_tts/en_US-lessac-medium.onnx"
 
 # Delay before playback (seconds)
 TTS_START_DELAY = 0.05
+
+# Split long responses into smaller TTS files so playback starts sooner.
+TTS_CHUNK_MAX_CHARS = 140
 
 
 # =========================
@@ -297,13 +312,13 @@ LISTEN_END_POST_ROLL_SECONDS = 0.60
 # Network timeout for live info HTTP requests.
 LIVE_INFO_TIMEOUT_SECONDS = 6
 
-# Headlines returned when user asks for news/current events.
+# Headlines returned per source when user asks for news/current events.
 NEWS_HEADLINE_COUNT = 3
 
 # Public RSS feeds checked in order.
 NEWS_RSS_FEEDS = (
+    "https://feeds.npr.org/1001/rss.xml",
     "https://feeds.bbci.co.uk/news/world/rss.xml",
-    "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
 )
 
 # Weather location for generic requests; "auto" uses IP-based location.

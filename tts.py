@@ -1,6 +1,7 @@
 import contextlib
 from collections import deque
 import os
+import re
 import subprocess
 import threading
 import time
@@ -10,6 +11,7 @@ import sounddevice as sd
 
 from config import *
 from ezra_emotion import set_emotion
+from respeaker_io import create_respeaker_or_raise
 import state
 
 
@@ -30,6 +32,7 @@ def suppress_stderr():
 
 
 _stop_model = None
+_stop_mic = None
 
 if ENABLE_MID_RESPONSE_STOP:
     try:
@@ -51,12 +54,103 @@ if ENABLE_MID_RESPONSE_STOP:
         if not QUIET_STARTUP:
             print(f"⚠️ Mid-response stop disabled: {e}")
 
+if ENABLE_MID_RESPONSE_STOP and ENABLE_MID_RESPONSE_VAD_ASSIST:
+    try:
+        _stop_mic = create_respeaker_or_raise()
+    except Exception as e:
+        _stop_mic = None
+        if not QUIET_STARTUP:
+            print(f"⚠️ Mid-response VAD assist disabled: {e}")
 
-def _monitor_stop_phrase(stop_event):
-    """Listen for ezra_stop while TTS audio is playing."""
+
+def _prediction_stop_score(predictions):
+    """Return the stop score even if OpenWakeWord exposes a path-like key."""
+
+    if "ezra_stop" in predictions:
+        return float(predictions["ezra_stop"]), "ezra_stop"
+
+    best_key = None
+    best_score = 0.0
+
+    for key, value in predictions.items():
+        normalized_key = str(key).lower().replace("-", "_").replace(" ", "_")
+
+        if "ezra_stop" in normalized_key or normalized_key.endswith("_stop"):
+            score = float(value)
+            if best_key is None or score > best_score:
+                best_key = key
+                best_score = score
+
+    return best_score, best_key
+
+
+def _flush_stop_model():
+    """Clear OpenWakeWord's rolling features between TTS responses."""
 
     if _stop_model is None:
         return
+
+    silence = np.zeros(WAKE_SAMPLE_RATE, dtype=np.int16)
+
+    try:
+        _stop_model.predict(silence)
+        _stop_model.predict(silence)
+    except Exception:
+        pass
+
+
+def _prepare_stop_audio(audio):
+    """Apply gentle gain and RMS normalization for stop-word inference."""
+
+    prepared = np.asarray(audio, dtype=np.float32)
+
+    if prepared.size == 0:
+        return prepared
+
+    prepared = prepared - float(np.mean(prepared))
+    prepared = np.clip(prepared * MID_RESPONSE_STOP_MIC_GAIN, -1.0, 1.0)
+
+    rms = float(np.sqrt(np.mean(prepared**2)))
+
+    if 0.0 < rms < MID_RESPONSE_STOP_TARGET_RMS:
+        prepared = np.clip(
+            prepared * (MID_RESPONSE_STOP_TARGET_RMS / rms),
+            -1.0,
+            1.0,
+        )
+
+    return prepared
+
+
+def _read_respeaker_speech():
+    """Return True when ReSpeaker reports speech, if available."""
+
+    if _stop_mic is None:
+        return False
+
+    try:
+        doa = _stop_mic.read("DOA_VALUE")
+    except Exception:
+        return False
+
+    if len(doa) >= 4:
+        return bool(doa[3])
+
+    if len(doa) >= 2:
+        return bool(doa[1])
+
+    return False
+
+
+def _monitor_stop_phrase(stop_event, ready_event=None):
+    """Listen for ezra_stop while TTS audio is playing."""
+
+    if _stop_model is None:
+        if ready_event is not None:
+            ready_event.set()
+        return
+
+    _flush_stop_model()
 
     audio_queue = deque()
     stop_hits = deque(maxlen=MID_RESPONSE_STOP_GUARD_HITS)
@@ -64,8 +158,6 @@ def _monitor_stop_phrase(stop_event):
     rolling_filled = 0
 
     def audio_callback(indata, frames, time_info, status):
-        if status:
-            return
         audio_queue.append(indata[:, 0].copy())
 
     try:
@@ -77,6 +169,9 @@ def _monitor_stop_phrase(stop_event):
             blocksize=WAKE_BLOCK_SIZE,
             callback=audio_callback,
         ):
+            if ready_event is not None:
+                ready_event.set()
+
             while not stop_event.is_set():
                 if not audio_queue:
                     time.sleep(0.01)
@@ -85,21 +180,12 @@ def _monitor_stop_phrase(stop_event):
                 chunk = audio_queue.popleft()
 
                 if chunk.size >= rolling.size:
-                    boosted = np.clip(
-                        chunk[-rolling.size :] * MID_RESPONSE_STOP_MIC_GAIN,
-                        -1.0,
-                        1.0,
-                    )
-                    rolling = boosted.astype(np.float32, copy=False)
+                    rolling = chunk[-rolling.size :].astype(np.float32, copy=False)
                     rolling_filled = rolling.size
                 else:
                     shift = chunk.size
                     rolling[:-shift] = rolling[shift:]
-                    rolling[-shift:] = np.clip(
-                        chunk * MID_RESPONSE_STOP_MIC_GAIN,
-                        -1.0,
-                        1.0,
-                    )
+                    rolling[-shift:] = chunk.astype(np.float32, copy=False)
                     rolling_filled = min(rolling.size, rolling_filled + shift)
 
                 min_samples = max(
@@ -110,31 +196,75 @@ def _monitor_stop_phrase(stop_event):
                     continue
 
                 # Keep model input length fixed to match wake-word runtime expectations.
-                audio_int16 = np.clip(rolling * 32767, -32768, 32767).astype(np.int16)
+                prepared_audio = _prepare_stop_audio(rolling)
+                audio_int16 = np.clip(
+                    prepared_audio * 32767,
+                    -32768,
+                    32767,
+                ).astype(np.int16)
 
                 predictions = _stop_model.predict(audio_int16)
-                stop_score = float(predictions.get("ezra_stop", 0.0))
+                stop_score, _ = _prediction_stop_score(predictions)
+                vad_speech = (
+                    ENABLE_MID_RESPONSE_VAD_ASSIST and _read_respeaker_speech()
+                )
 
-                stop_hits.append(stop_score >= MID_RESPONSE_STOP_GUARD_THRESHOLD)
+                threshold = MID_RESPONSE_STOP_GUARD_THRESHOLD
+                if vad_speech:
+                    threshold = min(
+                        threshold,
+                        MID_RESPONSE_STOP_VAD_ASSIST_THRESHOLD,
+                    )
+
+                stop_hits.append(stop_score >= threshold)
 
                 if len(stop_hits) == MID_RESPONSE_STOP_GUARD_HITS and all(stop_hits):
                     stop_event.set()
                     print("🛑 Stop phrase detected — interrupting response")
+                    _flush_stop_model()
                     return
     except Exception as e:
         # Keep TTS running even if monitor fails, but surface diagnostics.
+        if ready_event is not None:
+            ready_event.set()
+
         if not QUIET_STARTUP:
             print(f"⚠️ Mid-response stop monitor error: {e}")
         return
 
 
-def speak(text, allow_mid_response_stop=True):
+def _split_tts_text(text):
+    if len(text) <= TTS_CHUNK_MAX_CHARS:
+        return [text]
+
+    pieces = [
+        piece.strip()
+        for piece in re.split(r"(?<=[!?;])\s+|(?<=[a-z0-9]\.)\s+", text)
+        if piece.strip()
+    ]
+
+    chunks = []
+    current = ""
+
+    for piece in pieces:
+        if not current:
+            current = piece
+        elif len(current) + 1 + len(piece) <= TTS_CHUNK_MAX_CHARS:
+            current = f"{current} {piece}"
+        else:
+            chunks.append(current)
+            current = piece
+
+    if current:
+        chunks.append(current)
+
+    return chunks or [text]
+
+
+def _generate_speech_file(text):
     if state.shutting_down:
-        return
+        return False
 
-    print(f"Ezra: {text}")
-
-    # Generate speech using Piper
     cmd = (
         f'echo "{text}" | '
         f"{PIPER_PATH} "
@@ -146,11 +276,10 @@ def speak(text, allow_mid_response_stop=True):
         cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     )
 
-    # Talking animation
-    set_emotion(EMOTION_TALKING)
-    time.sleep(TTS_START_DELAY)
+    return True
 
-    # Play audio and optionally monitor for live stop phrase.
+
+def _play_speech_file(stop_event):
     proc = subprocess.Popen(
         ["aplay", "-D", SPEAKER_DEVICE, "temp.wav"],
         stdout=subprocess.DEVNULL,
@@ -159,9 +288,33 @@ def speak(text, allow_mid_response_stop=True):
 
     state.tts_process = proc
 
-    stop_event = threading.Event()
-    monitor_thread = None
+    try:
+        while proc.poll() is None:
+            if stop_event.is_set():
+                proc.terminate()
+                try:
+                    proc.wait(timeout=0.3)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                return True
+            time.sleep(0.02)
+    finally:
+        state.tts_process = None
 
+    return False
+
+
+def speak(text, allow_mid_response_stop=True):
+    if state.shutting_down:
+        return
+
+    print(f"Ezra: {text}")
+
+    # Open the live stop listener before playback so the speaker device does
+    # not win the hardware race and hide "Ezra stop" from the microphone.
+    stop_event = threading.Event()
+    ready_event = threading.Event()
+    monitor_thread = None
     interrupted_by_stop = False
 
     if (
@@ -171,25 +324,35 @@ def speak(text, allow_mid_response_stop=True):
     ):
         monitor_thread = threading.Thread(
             target=_monitor_stop_phrase,
-            args=(stop_event,),
+            args=(stop_event, ready_event),
             daemon=True,
         )
         monitor_thread.start()
+        ready_event.wait(timeout=MID_RESPONSE_STOP_READY_TIMEOUT)
+    elif allow_mid_response_stop:
+        _flush_stop_model()
+
+    # Talking animation
+    set_emotion(EMOTION_TALKING)
+    time.sleep(TTS_START_DELAY)
 
     try:
-        while proc.poll() is None:
+        for chunk in _split_tts_text(text):
             if stop_event.is_set():
                 interrupted_by_stop = True
-                proc.terminate()
-                try:
-                    proc.wait(timeout=0.3)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
                 break
-            time.sleep(0.02)
+
+            if not _generate_speech_file(chunk):
+                break
+
+            if stop_event.is_set() or _play_speech_file(stop_event):
+                interrupted_by_stop = True
+                break
     finally:
         stop_event.set()
-        state.tts_process = None
+        if monitor_thread is not None:
+            monitor_thread.join(timeout=0.5)
+        _flush_stop_model()
 
     # Return to listening
     set_emotion(EMOTION_LISTENING)
