@@ -332,10 +332,6 @@ def speak(text, allow_mid_response_stop=True):
     elif allow_mid_response_stop:
         _flush_stop_model()
 
-    # Talking animation
-    set_emotion(EMOTION_TALKING)
-    time.sleep(TTS_START_DELAY)
-
     try:
         for chunk in _split_tts_text(text):
             if stop_event.is_set():
@@ -344,6 +340,10 @@ def speak(text, allow_mid_response_stop=True):
 
             if not _generate_speech_file(chunk):
                 break
+
+            if TTS_START_DELAY > 0:
+                time.sleep(TTS_START_DELAY)
+            set_emotion(EMOTION_TALKING)
 
             if stop_event.is_set() or _play_speech_file(stop_event):
                 interrupted_by_stop = True
@@ -354,8 +354,8 @@ def speak(text, allow_mid_response_stop=True):
             monitor_thread.join(timeout=0.5)
         _flush_stop_model()
 
-    # Return to listening
-    set_emotion(EMOTION_LISTENING)
+    # Return to wake-word standby.
+    set_emotion(EMOTION_STANDBY)
 
     if interrupted_by_stop and not state.shutting_down:
         # Confirmation without recursive stop-monitoring.

@@ -14,16 +14,25 @@ if PROJECT_ROOT not in sys.path:
 
 import board
 import neopixel
-from config import QUIET_STARTUP
+from config import (
+    MOUTH_LED_BRIGHTNESS,
+    MOUTH_LED_ORDER,
+    MOUTH_LED_PIN,
+    MOUTH_LED_STRIP_COUNT,
+    MOUTH_LEDS_PER_STRIP,
+    QUIET_STARTUP,
+)
 from robot import servos
 from robot import eyes
 from robot import eyelids
 
-# Neopixel setup matching the working test_gpio13.py script.
-LED_COUNT = 8
-LED_PIN = board.D13
-LED_BRIGHTNESS = 0.2
-LED_ORDER = neopixel.GRB
+# Neopixel setup shared with the main mouth animation config.
+LEDS_PER_STRIP = MOUTH_LEDS_PER_STRIP
+LED_STRIP_COUNT = MOUTH_LED_STRIP_COUNT
+LED_COUNT = LEDS_PER_STRIP * LED_STRIP_COUNT
+LED_PIN = getattr(board, MOUTH_LED_PIN)
+LED_BRIGHTNESS = MOUTH_LED_BRIGHTNESS
+LED_ORDER = getattr(neopixel, MOUTH_LED_ORDER)
 
 # Track current incremental angles
 eye_h = 90
@@ -42,7 +51,7 @@ def init_neopixel(silent=False):
 
     try:
         if not silent and not QUIET_STARTUP:
-            print("[testmode] Initializing Neopixel on GPIO13...")
+            print("[testmode] Initializing Neopixel on D18...")
         pixels = neopixel.NeoPixel(
             LED_PIN,
             LED_COUNT,
@@ -53,14 +62,14 @@ def init_neopixel(silent=False):
         neopixel_ready = True
         clear_neopixel(silent=True)
         if not silent and not QUIET_STARTUP:
-            print("[testmode] Neopixel initialized successfully on GPIO13")
+            print("[testmode] Neopixel initialized successfully on D18")
             print("[testmode] LEDs initialized OFF")
         return True
     except Exception as e:
         if not silent:
             print(f"[testmode] Neopixel initialization FAILED: {e}")
             print(f"[testmode] Error type: {type(e).__name__}")
-            print("[testmode] Check: Is GPIO13 correctly wired to LED DIN?")
+            print("[testmode] Check: Is D18 correctly wired to LED DIN?")
         pixels = None
         neopixel_ready = False
         return False
@@ -69,6 +78,12 @@ def init_neopixel(silent=False):
 def pixels_show():
     if pixels is not None:
         pixels.show()
+
+
+def strip_bounds(strip_number):
+    start = (strip_number - 1) * LEDS_PER_STRIP
+    end = start + LEDS_PER_STRIP
+    return start, end
 
 
 def clear_neopixel(silent=False):
@@ -199,6 +214,59 @@ def neopixel_all_white():
         print(f"[testmode] ERROR setting white: {e}")
 
 
+def neopixel_strip_color(strip_number, color, label):
+    if not neopixel_ready:
+        print("[testmode] ERROR: Neopixel not available")
+        return
+    if strip_number < 1 or strip_number > LED_STRIP_COUNT:
+        print(f"[testmode] ERROR: Strip {strip_number} is not configured")
+        return
+
+    try:
+        start, end = strip_bounds(strip_number)
+        pixels.fill((0, 0, 0))
+        for i in range(start, end):
+            pixels[i] = color
+        pixels_show()
+        print(f"[testmode] Strip {strip_number}: {label}")
+    except Exception as e:
+        print(f"[testmode] ERROR setting strip {strip_number}: {e}")
+
+
+def neopixel_strip_1_white():
+    neopixel_strip_color(1, (255, 255, 255), "WHITE")
+
+
+def neopixel_strip_2_white():
+    neopixel_strip_color(2, (255, 255, 255), "WHITE")
+
+
+def neopixel_strip_3_white():
+    neopixel_strip_color(3, (255, 255, 255), "WHITE")
+
+
+def neopixel_identify_strips():
+    if not neopixel_ready:
+        print("[testmode] ERROR: Neopixel not available")
+        return
+
+    try:
+        pixels.fill((0, 0, 0))
+        start, end = strip_bounds(1)
+        for i in range(start, end):
+            pixels[i] = (255, 0, 0)
+        start, end = strip_bounds(2)
+        for i in range(start, end):
+            pixels[i] = (0, 0, 255)
+        start, end = strip_bounds(3)
+        for i in range(start, end):
+            pixels[i] = (0, 255, 0)
+        pixels_show()
+        print("[testmode] Strip 1: RED, Strip 2: BLUE, Strip 3: GREEN")
+    except Exception as e:
+        print(f"[testmode] ERROR identifying strips: {e}")
+
+
 def neopixel_off():
     clear_neopixel()
 
@@ -207,11 +275,13 @@ def neopixel_cycle():
     """Cycle through all LEDs one at a time"""
     if not neopixel_ready:
         return
-    for i in range(8):
+    for i in range(LED_COUNT):
         pixels.fill((0, 0, 0))
         pixels[i] = (255, 100, 0)  # Orange
         pixels_show()
-        print(f"[testmode] LED {i} lit")
+        strip_number = (i // LEDS_PER_STRIP) + 1
+        strip_led = i % LEDS_PER_STRIP
+        print(f"[testmode] LED {i} lit (strip {strip_number}, pixel {strip_led})")
         time.sleep(0.2)
     pixels.fill((0, 0, 0))
     pixels_show()
@@ -231,7 +301,8 @@ def neopixel_rainbow():
         (148, 0, 211),  # Violet
         (255, 255, 255),  # White
     ]
-    for i, color in enumerate(colors):
+    for i in range(LED_COUNT):
+        color = colors[i % len(colors)]
         pixels[i] = color
     pixels_show()
     print("[testmode] Rainbow pattern")
@@ -292,6 +363,10 @@ def run():
     print("  L = all blue")
     print("  M = all white")
     print("  X = all off")
+    print("  1 = strip 1 white")
+    print("  2 = strip 2 white")
+    print("  3 = strip 3 white")
+    print("  4 = identify strips (1 red, 2 blue, 3 green)")
     print("  Y = cycle through LEDs")
     print("  V = rainbow pattern")
     print("  Z = pulse effect")
@@ -309,9 +384,12 @@ def run():
     init_neopixel()
 
     if neopixel_ready:
-        print("[testmode] Neopixel initialized OK (GPIO13, 8 LEDs)")
+        print(
+            "[testmode] Neopixel initialized OK "
+            f"(D18, {LED_STRIP_COUNT} x {LEDS_PER_STRIP} LEDs, {LED_COUNT} total)"
+        )
     else:
-        print("[testmode] WARNING: Neopixel not initialized - check GPIO13 connection")
+        print("[testmode] WARNING: Neopixel not initialized - check D18 connection")
 
     while True:
         k = get_key()
@@ -392,6 +470,18 @@ def run():
 
         elif k in ("x", "X"):
             neopixel_off()
+
+        elif k == "1":
+            neopixel_strip_1_white()
+
+        elif k == "2":
+            neopixel_strip_2_white()
+
+        elif k == "3":
+            neopixel_strip_3_white()
+
+        elif k == "4":
+            neopixel_identify_strips()
 
         elif k in ("y", "Y"):
             neopixel_cycle()

@@ -159,8 +159,50 @@ TTS_CHUNK_MAX_CHARS = 140
 # Default listening state
 EMOTION_LISTENING = "listening"
 
+# Idle wake-word monitoring state
+EMOTION_STANDBY = "standby"
+
 # Talking animation state
 EMOTION_TALKING = "normal_talking"
+
+# Command processing animation state
+EMOTION_THINKING = "thinking"
+
+# Show a smile briefly after upbeat/curious AI responses finish speaking.
+POST_RESPONSE_SMILE_SECONDS = 5.0
+POST_RESPONSE_SMILE_EMOTIONS = ("happy", "curious")
+
+
+# =========================
+# MOUTH LEDS
+# =========================
+
+MOUTH_LED_PIN = "D18"
+MOUTH_LEDS_PER_STRIP = 8
+MOUTH_LED_STRIP_COUNT = 3
+MOUTH_LED_BRIGHTNESS = 0.2
+MOUTH_LED_ORDER = "GRB"
+
+MOUTH_LED_HUE_STEP_DEGREES = 6
+MOUTH_LED_DEFAULT_HUE = 30
+MOUTH_LED_TALK_FRAME_DELAY = 0.2
+MOUTH_LED_THINK_DURATION = 4.0
+MOUTH_LED_THINK_STEP_DELAY = 0.25
+MOUTH_LED_THINK_FULL_PAUSE = 1.5
+
+MOUTH_LED_MODE_SMILE = "smile"
+MOUTH_LED_MODE_FROWN = "frown"
+MOUTH_LED_MODE_TALK = "talk"
+MOUTH_LED_MODE_LISTENING = "listening"
+MOUTH_LED_MODE_THINKING = "thinking"
+
+MOUTH_LED_SELECTED_HUES = {
+    MOUTH_LED_MODE_SMILE: 354,
+    MOUTH_LED_MODE_FROWN: 252,
+    MOUTH_LED_MODE_TALK: 24,
+    MOUTH_LED_MODE_LISTENING: 114,
+    MOUTH_LED_MODE_THINKING: 216,
+}
 
 
 # =========================

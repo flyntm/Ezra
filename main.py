@@ -7,7 +7,7 @@ from audio_debug import playback_diagnostic, save_debug_wav
 from command_normalization import is_wake_word_only, strip_wake_word
 from config import *
 from ezra_brain import ask_ezra
-from ezra_emotion import set_emotion
+from ezra_emotion import set_emotion, set_temporary_emotion
 from live_info import get_live_info_response
 from stt import transcribe
 from tts import speak
@@ -104,9 +104,11 @@ def main():
             print(f"DEBUG wake text: [{wake_text}]")
 
             reset_idle_timer()
+            set_emotion(EMOTION_LISTENING)
 
             # Check whether the wake result also contained a command.
             command = strip_wake_word(wake_text)
+            command_was_transcribed = False
 
             # Usually the command is spoken after the wake word.
             if not command:
@@ -123,13 +125,17 @@ def main():
                         maybe_playback_diagnostic(wake_audio)
 
                     print("⏱️ Timeout waiting for command")
+                    set_emotion(EMOTION_STANDBY)
                     continue
 
                 # Convert the command audio to text.
+                set_emotion(EMOTION_THINKING)
+                command_was_transcribed = True
                 text = transcribe(audio)
                 print(f"🧪 STT raw text: [{text}]")
 
                 if not text:
+                    set_emotion(EMOTION_STANDBY)
                     continue
 
                 command = strip_wake_word(text)
@@ -138,6 +144,7 @@ def main():
                 # Ignore recordings containing only the wake word.
                 if is_wake_word_only(command):
                     print("⚠️ Wake word only — " "returning to standby")
+                    set_emotion(EMOTION_STANDBY)
                     continue
 
             else:
@@ -149,6 +156,7 @@ def main():
             # Ignore empty or unclear commands.
             if len(command) < 2:
                 print("⚠️ Ignoring short or unclear input")
+                set_emotion(EMOTION_STANDBY)
                 continue
 
             print(f"📝 Command: {command}")
@@ -160,6 +168,9 @@ def main():
                 speak(GOODBYE_TEXT)
                 break
 
+            if not command_was_transcribed:
+                set_emotion(EMOTION_THINKING)
+
             # Handle simple commands locally.
             if handle_local_command(command):
                 # Run optional audio replay diagnostics after Ezra responds.
@@ -167,8 +178,6 @@ def main():
                 continue
 
             # Send all other commands to Ezra's brain.
-            set_emotion(EMOTION_LISTENING)
-
             try:
                 result = ask_ezra(command)
 
@@ -186,7 +195,7 @@ def main():
                 result = {}
 
             response = result.get("response", "")
-            emotion = result.get("emotion", "neutral")
+            emotion = str(result.get("emotion", "neutral")).strip().lower()
 
             if not response:
                 response = "I'm not sure how to respond to that."
@@ -199,6 +208,13 @@ def main():
 
             set_emotion(mapped_emotion)
             speak(response)
+
+            if emotion in POST_RESPONSE_SMILE_EMOTIONS:
+                set_temporary_emotion(
+                    "happy",
+                    POST_RESPONSE_SMILE_SECONDS,
+                    fallback_emotion=EMOTION_STANDBY,
+                )
 
             # Run optional audio replay diagnostics after Ezra responds.
             maybe_playback_diagnostic()

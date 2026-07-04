@@ -1,10 +1,23 @@
 # robot_emotions.py - reusable robot emotion controller
 
+import colorsys
 import math
 import random
 import threading
 import time
 
+from config import (
+    MOUTH_LED_DEFAULT_HUE,
+    MOUTH_LED_MODE_FROWN,
+    MOUTH_LED_MODE_LISTENING,
+    MOUTH_LED_MODE_SMILE,
+    MOUTH_LED_MODE_TALK,
+    MOUTH_LED_MODE_THINKING,
+    MOUTH_LED_SELECTED_HUES,
+    MOUTH_LED_TALK_FRAME_DELAY,
+    MOUTH_LED_THINK_FULL_PAUSE,
+    MOUTH_LED_THINK_STEP_DELAY,
+)
 from robot import animation
 from robot import eyelids
 from robot import eyes
@@ -13,6 +26,7 @@ from robot import testmode
 from robot.constants import CH_LID_LEFT, CH_LID_RIGHT
 
 AVAILABLE_EMOTIONS = (
+    "standby",
     "normal_talking",
     "listening",
     "happy",
@@ -25,6 +39,8 @@ AVAILABLE_EMOTIONS = (
 )
 
 EMOTION_ALIASES = {
+    "idle": "standby",
+    "sleeping": "standby",
     "normal": "normal_talking",
     "talking": "normal_talking",
     "talk": "normal_talking",
@@ -50,7 +66,7 @@ class RobotEmotionController:
 
     def __init__(self, tick_seconds=0.04):
         self.tick_seconds = tick_seconds
-        self._emotion = "listening"
+        self._emotion = "standby"
         self._running = False
         self._initialized = False
         self._thread = None
@@ -60,6 +76,11 @@ class RobotEmotionController:
         self._next_blink_after = random.uniform(10.0, 18.0)
         self._next_mouth_frame = 0.0
         self._mouth_is_lit = False
+        self._talk_frame_index = 0
+        self._thinking_count = 0
+        self._thinking_full_until = 0.0
+        self._temporary_until = 0.0
+        self._temporary_fallback = None
         self._next_confused_shift = 0.0
         self._confused_side = -1
         self._exasperated_sigh_until = 0.0
@@ -88,13 +109,15 @@ class RobotEmotionController:
             self._initialized = True
             return True
 
-    def start(self, initial_emotion="listening"):
+    def start(self, initial_emotion="standby"):
         """Start the background animation loop."""
         if not self.initialize():
             return False
 
         with self._lock:
             self._emotion = _normalize_emotion(initial_emotion)
+            self._temporary_until = 0.0
+            self._temporary_fallback = None
             self._apply_entry_pose_locked(self._emotion)
 
             if self._running:
@@ -139,6 +162,34 @@ class RobotEmotionController:
             self._emotion = emotion
             self._started_at = time.time()
             self._next_mouth_frame = 0.0
+            self._talk_frame_index = 0
+            self._thinking_count = 0
+            self._thinking_full_until = 0.0
+            self._temporary_until = 0.0
+            self._temporary_fallback = None
+            self._next_confused_shift = 0.0
+            self._exasperated_sigh_until = 0.0
+            self._apply_entry_pose_locked(emotion)
+
+        return emotion
+
+    def set_temporary_emotion(self, emotion, seconds, fallback_emotion="standby"):
+        """Switch to an emotion briefly, then return to a fallback in the loop."""
+        emotion = _normalize_emotion(emotion)
+        fallback_emotion = _normalize_emotion(fallback_emotion)
+
+        if not self._initialized:
+            self.initialize()
+
+        with self._lock:
+            self._emotion = emotion
+            self._started_at = time.time()
+            self._next_mouth_frame = 0.0
+            self._talk_frame_index = 0
+            self._thinking_count = 0
+            self._thinking_full_until = 0.0
+            self._temporary_until = time.time() + max(0.0, float(seconds))
+            self._temporary_fallback = fallback_emotion
             self._next_confused_shift = 0.0
             self._exasperated_sigh_until = 0.0
             self._apply_entry_pose_locked(emotion)
@@ -162,9 +213,24 @@ class RobotEmotionController:
         with self._lock:
             emotion = self._emotion
             now = time.time()
+
+            if self._temporary_until and now >= self._temporary_until:
+                emotion = self._temporary_fallback or "standby"
+                self._emotion = emotion
+                self._started_at = now
+                self._next_mouth_frame = 0.0
+                self._talk_frame_index = 0
+                self._thinking_count = 0
+                self._thinking_full_until = 0.0
+                self._temporary_until = 0.0
+                self._temporary_fallback = None
+                self._apply_entry_pose_locked(emotion)
+
             t = now - self._started_at
 
-            if emotion == "normal_talking":
+            if emotion == "standby":
+                self._tick_standby(now, t)
+            elif emotion == "normal_talking":
                 self._tick_normal_talking(now, t)
             elif emotion == "listening":
                 self._tick_listening(now, t)
@@ -194,21 +260,25 @@ class RobotEmotionController:
             time.sleep(self.tick_seconds)
 
     def _apply_entry_pose_locked(self, emotion):
-        if emotion == "normal_talking":
+        if emotion == "standby":
+            self._set_lids(1.0)
+            eyes.gaze_smooth(90, 86, steps=12, duration=0.12)
+            self._clear_mouth()
+        elif emotion == "normal_talking":
             self._set_lids(1.0)
             eyes.gaze_smooth(90, 90, steps=12, duration=0.12)
         elif emotion == "listening":
             self._set_lids(1.0)
             eyes.gaze_smooth(90, 86, steps=12, duration=0.12)
-            self._mouth_color((0, 0, 0))
+            self._mouth_listening()
         elif emotion == "happy":
             self._set_lids(0.96)
             eyes.gaze_smooth(90, 86, steps=14, duration=0.16)
-            self._mouth_color((180, 125, 0), width=6)
+            self._mouth_smile()
         elif emotion == "sad":
             self._set_lids(0.52)
             self._gaze_independent_smooth(90, 98, 90, 106, steps=18, duration=0.25)
-            self._mouth_color((0, 0, 70), width=3)
+            self._mouth_frown()
         elif emotion == "surprised":
             eyelids.wide_open_lids()
             eyes.gaze_smooth(90, 86, steps=10, duration=0.10)
@@ -224,26 +294,32 @@ class RobotEmotionController:
         elif emotion == "thinking":
             self._set_lids(0.90)
             eyes.gaze_smooth(90, 70, steps=14, duration=0.18)
-            self._mouth_left_side((110, 85, 0), count=2)
+            self._mouth_thinking_frame(1)
         elif emotion == "wake":
             eyes.center()
             self._set_lids(1.0)
             self._mouth_left_side((150, 150, 150), count=1)
+
+    def _tick_standby(self, now, t):
+        h = 90 + 8 * math.sin(t * 0.25)
+        v = 86 + 3 * math.sin(t * 0.35)
+        eyes.gaze(h, v)
+        self._maybe_blink(now)
+        self._clear_mouth()
 
     def _tick_normal_talking(self, now, t):
         h = 90 + 7 * math.sin(t * 0.55)
         v = 90 + 3 * math.sin(t * 0.8)
         eyes.gaze(h, v)
         self._maybe_blink(now)
-        self._mouth_talk_frame(now, base_color=(190, 125, 0))
+        self._mouth_talk_frame(now)
 
     def _tick_listening(self, now, t):
         h = 90 + 12 * math.sin(t * 0.35)
         v = 86 + 5 * math.sin(t * 0.45)
         eyes.gaze(h, v)
-        pass
         self._maybe_blink(now)
-        self._clear_mouth()
+        self._mouth_listening()
 
     def _tick_happy(self, now, t):
         h = 90 + 9 * math.sin(t * 1.1)
@@ -251,12 +327,7 @@ class RobotEmotionController:
         eyes.gaze(h, v)
         self._set_lids(0.92 + 0.04 * math.sin(t * 2.2))
         self._maybe_blink(now, every=(9.0, 16.0))
-        if now >= self._next_mouth_frame:
-            level = random.randint(90, 180)
-            self._mouth_color(
-                (level, max(0, level - 40), 0), width=random.randint(5, 8)
-            )
-            self._next_mouth_frame = now + 0.12
+        self._mouth_smile()
 
     def _tick_sad(self, now, t):
         h = 90 + 3 * math.sin(t * 0.22)
@@ -265,7 +336,7 @@ class RobotEmotionController:
         self._gaze_independent(h, left_v, h, right_v)
         self._set_lids(0.50 + 0.04 * math.sin(t * 0.6))
         self._maybe_blink(now, every=(11.0, 20.0), closed_seconds=0.30)
-        self._mouth_color((0, 0, 55), width=3)
+        self._mouth_frown()
 
     def _tick_surprised(self, now, t):
         h = 90 + 2 * math.sin(t * 2.4)
@@ -303,7 +374,7 @@ class RobotEmotionController:
         eyes.gaze(h, v)
         self._set_lids(0.90)
         self._maybe_blink(now, every=(10.0, 18.0))
-        self._mouth_left_side((110, 85, 0), count=2)
+        self._tick_mouth_thinking(now)
 
     def _maybe_blink(self, now, every=(6.0, 12.0), closed_seconds=0.16):
         if self._last_blink_at == 0.0:
@@ -326,7 +397,7 @@ class RobotEmotionController:
         self._next_blink_after = random.uniform(*every)
 
     def _restore_lids_after_blink_locked(self, emotion):
-        if emotion in ("normal_talking", "listening"):
+        if emotion in ("standby", "normal_talking", "listening"):
             self._set_lids(1.0)
         elif emotion == "happy":
             self._set_lids(0.96)
@@ -381,30 +452,110 @@ class RobotEmotionController:
             duration=duration,
         )
 
-    def _mouth_talk_frame(self, now, base_color):
+    def _mouth_talk_frame(self, now):
         if now < self._next_mouth_frame:
             return
 
+        frames = (
+            [
+                [0, 0, 0, 0, 0, 0, 0, 0],
+                [1, 1, 1, 1, 1, 1, 1, 1],
+                [0, 1, 1, 1, 1, 1, 1, 0],
+            ],
+            [
+                [0, 1, 1, 1, 1, 1, 1, 0],
+                [1, 0, 0, 0, 0, 0, 0, 1],
+                [0, 1, 1, 1, 1, 1, 1, 0],
+            ],
+        )
+        self._show_mouth_pattern(
+            frames[self._talk_frame_index % len(frames)],
+            self._mouth_mode_color(MOUTH_LED_MODE_TALK),
+        )
+        self._talk_frame_index += 1
+        self._next_mouth_frame = now + MOUTH_LED_TALK_FRAME_DELAY
+
+    def _mouth_smile(self):
+        self._show_mouth_pattern(
+            [
+                [1, 0, 0, 0, 0, 0, 0, 1],
+                [0, 1, 0, 0, 0, 0, 1, 0],
+                [0, 0, 1, 1, 1, 1, 0, 0],
+            ],
+            self._mouth_mode_color(MOUTH_LED_MODE_SMILE),
+        )
+
+    def _mouth_frown(self):
+        self._show_mouth_pattern(
+            [
+                [0, 0, 1, 1, 1, 1, 0, 0],
+                [0, 1, 0, 0, 0, 0, 1, 0],
+                [1, 0, 0, 0, 0, 0, 0, 1],
+            ],
+            self._mouth_mode_color(MOUTH_LED_MODE_FROWN),
+        )
+
+    def _mouth_listening(self):
+        self._show_mouth_pattern(
+            [
+                [0, 0, 0, 0, 0, 0, 0, 0],
+                [1, 1, 0, 0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 0, 0],
+            ],
+            self._mouth_mode_color(MOUTH_LED_MODE_LISTENING),
+        )
+
+    def _tick_mouth_thinking(self, now):
+        if now < self._thinking_full_until:
+            return
+
+        if now < self._next_mouth_frame:
+            return
+
+        self._thinking_count += 1
+        if self._thinking_count > testmode.LEDS_PER_STRIP:
+            self._thinking_count = 1
+
+        self._mouth_thinking_frame(self._thinking_count)
+
+        if self._thinking_count == testmode.LEDS_PER_STRIP:
+            self._thinking_full_until = now + MOUTH_LED_THINK_FULL_PAUSE
+            self._next_mouth_frame = self._thinking_full_until
+        else:
+            self._next_mouth_frame = now + MOUTH_LED_THINK_STEP_DELAY
+
+    def _mouth_thinking_frame(self, count):
+        count = max(0, min(testmode.LEDS_PER_STRIP, int(count)))
+        self._show_mouth_pattern(
+            [
+                [0, 0, 0, 0, 0, 0, 0, 0],
+                [
+                    1 if i >= testmode.LEDS_PER_STRIP - count else 0
+                    for i in range(testmode.LEDS_PER_STRIP)
+                ],
+                [0, 0, 0, 0, 0, 0, 0, 0],
+            ],
+            self._mouth_mode_color(MOUTH_LED_MODE_THINKING),
+        )
+
+    def _mouth_mode_color(self, mode):
+        hue = int(MOUTH_LED_SELECTED_HUES.get(mode, MOUTH_LED_DEFAULT_HUE)) % 360
+        h = hue / 360.0
+        r, g, b = colorsys.hsv_to_rgb(h, 1.0, 1.0)
+        return int(r * 255), int(g * 255), int(b * 255)
+
+    def _show_mouth_pattern(self, pattern, color):
         if not testmode.neopixel_ready or testmode.pixels is None:
             return
 
-        width = random.choice((1, 2, 3, 4, 6, 8))
-        level = random.uniform(0.45, 1.0)
-        color = tuple(int(component * level) for component in base_color)
-        center = (testmode.LED_COUNT - 1) / 2
-
         testmode.pixels.fill((0, 0, 0))
-        for i in range(testmode.LED_COUNT):
-            distance = abs(i - center)
-            if distance <= width / 2:
-                falloff = 1.0 - (distance / max(1.0, width))
-                testmode.pixels[i] = tuple(
-                    int(component * falloff) for component in color
-                )
+        for row in range(min(testmode.LED_STRIP_COUNT, len(pattern))):
+            for col in range(min(testmode.LEDS_PER_STRIP, len(pattern[row]))):
+                if pattern[row][col]:
+                    testmode.pixels[row * testmode.LEDS_PER_STRIP + col] = color
 
         testmode.pixels_show()
         self._mouth_is_lit = True
-        self._next_mouth_frame = now + random.uniform(0.05, 0.12)
 
     def _mouth_color(self, color, width=None):
         if not testmode.neopixel_ready or testmode.pixels is None:
@@ -455,7 +606,7 @@ def _normalize_emotion(emotion):
 _default_controller = RobotEmotionController()
 
 
-def start(initial_emotion="listening"):
+def start(initial_emotion="standby"):
     return _default_controller.start(initial_emotion=initial_emotion)
 
 
@@ -465,6 +616,14 @@ def stop(clear_mouth=True, relax_servos=False):
 
 def set_emotion(emotion):
     return _default_controller.set_emotion(emotion)
+
+
+def set_temporary_emotion(emotion, seconds, fallback_emotion="standby"):
+    return _default_controller.set_temporary_emotion(
+        emotion,
+        seconds,
+        fallback_emotion=fallback_emotion,
+    )
 
 
 def speak():

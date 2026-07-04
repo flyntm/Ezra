@@ -8,6 +8,7 @@ import sounddevice as sd
 
 from config import (
     CONTINUOUS_CAPTURE_AFTER_WAKE,
+    EMOTION_LISTENING,
     EZRA_PREFERENCE_FLOOR,
     FORCE_HEY_EZRA_SCORE,
     HEY_EZRA_DOMINANCE_MARGIN,
@@ -549,6 +550,8 @@ def run(return_audio=False):
                     if sleeping:
                         wake_up()
                         sleeping = False
+
+                    robot_emotions.set_emotion(EMOTION_LISTENING)
 
                     last_activity_time = current_time
 
