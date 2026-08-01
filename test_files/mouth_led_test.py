@@ -6,6 +6,7 @@ Controls:
     T = talking animation
     L = listening
     K = thinking
+    A = all LEDs on, cycling through 8 colors
     Up/Down = browse hue wheel
     Enter = select current hue
     X = off
@@ -37,6 +38,17 @@ LED_BRIGHTNESS = ezra_config.MOUTH_LED_BRIGHTNESS
 LED_ORDER = getattr(neopixel, ezra_config.MOUTH_LED_ORDER)
 
 OFF = (0, 0, 0)
+ALL_LED_TEST_COLORS = (
+    (255, 0, 0),      # red
+    (255, 96, 0),     # orange
+    (255, 255, 0),    # yellow
+    (0, 255, 0),      # green
+    (0, 255, 255),    # cyan
+    (0, 0, 255),      # blue
+    (180, 0, 255),    # purple
+    (255, 255, 255),  # white
+)
+ALL_LED_TEST_COLOR_DELAY = 0.5
 
 HUE_STEP_DEGREES = ezra_config.MOUTH_LED_HUE_STEP_DEGREES
 HUE_CHOICES = 360 // HUE_STEP_DEGREES
@@ -94,7 +106,9 @@ def get_key():
 
 
 def rc_to_index(row, col):
-    return row * LEDS_PER_STRIP + col
+    # The physical strips are mounted bottom-to-top, while patterns are written
+    # top-to-bottom. Flip the row so expressions render in the intended orientation.
+    return (STRIP_COUNT - 1 - row) * LEDS_PER_STRIP + col
 
 
 def expression_color(mode):
@@ -155,6 +169,16 @@ def show_pattern(pattern, color=None):
 def all_off():
     pixels.fill(OFF)
     pixels.show()
+
+
+def all_led_color_test(color_delay=ALL_LED_TEST_COLOR_DELAY):
+    """Light every LED and cycle through eight diagnostic colors."""
+    for color in ALL_LED_TEST_COLORS:
+        pixels.fill(color)
+        pixels.show()
+        time.sleep(color_delay)
+
+    all_off()
 
 
 def drain_input_buffer(window_seconds=0.35):
@@ -315,6 +339,7 @@ def main():
     print("T = talking animation")
     print("L = listening")
     print("K = thinking")
+    print("A = all LEDs, cycle through 8 colors")
     print("(press S/F/T/L/K first to choose which expression color to edit)")
     print("Up/Down = browse hue wheel")
     print("Enter = select current hue")
@@ -391,6 +416,11 @@ def main():
                 print("[mouth_test] Thinking...")
                 thinking()
                 drain_input_buffer(window_seconds=0.15)
+            elif key in ("a", "A"):
+                print("[mouth_test] All LEDs: cycling through 8 colors...")
+                all_led_color_test()
+                drain_input_buffer(window_seconds=0.15)
+                print("[mouth_test] All-LED color test complete")
             elif key in ("x", "X"):
                 all_off()
                 print("[mouth_test] Off")

@@ -1,32 +1,44 @@
 import re
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import requests
 
 from config import (
     DEFAULT_WEATHER_LOCATION,
+    DEFAULT_WEATHER_LATITUDE,
+    DEFAULT_WEATHER_LONGITUDE,
     ENABLE_LIVE_INFO,
     LIVE_INFO_TIMEOUT_SECONDS,
     NEWS_HEADLINE_COUNT,
     NEWS_RSS_FEEDS,
     WEATHER_INCLUDE_COUNTRY,
+    WEATHER_MAX_OBSERVATION_AGE_MINUTES,
+    WEATHER_NWS_USER_AGENT,
+    WEATHER_STATION_SEARCH_LIMIT,
 )
 
 
 def _normalize_location(raw_location):
     if not raw_location:
         return DEFAULT_WEATHER_LOCATION
-    return raw_location.strip().replace(" ", "+")
+    return raw_location.strip()
 
 
 def _extract_weather_location(command):
     # Examples: "weather in dallas", "what's the weather in new york"
-    match = re.search(r"\bweather\s+in\s+([a-zA-Z\s]+)", command)
+    match = re.search(r"\bweather\s+in\s+([a-zA-Z,.\s]+)", command)
     if match:
-        return match.group(1).strip()
+        location = match.group(1).strip(" .,?")
+        return re.sub(
+            r"\s+(?:today|tonight|tomorrow|currently|right now|please)$",
+            "",
+            location,
+        ).strip()
 
-    match = re.search(r"\bin\s+([a-zA-Z\s]+)\s+weather\b", command)
+    match = re.search(r"\bin\s+([a-zA-Z,.\s]+)\s+weather\b", command)
     if match:
         return match.group(1).strip()
 
@@ -60,50 +72,132 @@ def _is_news_query(command):
     )
 
 
-def _resolve_location_text(payload, requested_location):
-    """Return a human-friendly location string from wttr payload."""
+def _geocode_weather_location(requested_location):
+    """Return latitude, longitude, label for a U.S. place name."""
 
-    nearest = (payload.get("nearest_area") or [{}])[0]
+    if requested_location.casefold() == DEFAULT_WEATHER_LOCATION.casefold():
+        return (
+            float(DEFAULT_WEATHER_LATITUDE),
+            float(DEFAULT_WEATHER_LONGITUDE),
+            DEFAULT_WEATHER_LOCATION,
+        )
 
-    city = (nearest.get("areaName") or [{}])[0].get("value", "").strip()
-    region = (nearest.get("region") or [{}])[0].get("value", "").strip()
-    country = (nearest.get("country") or [{}])[0].get("value", "").strip()
+    response = requests.get(
+        "https://geocoding-api.open-meteo.com/v1/search",
+        params={
+            "name": requested_location,
+            "count": 1,
+            "language": "en",
+            "format": "json",
+            "countryCode": "US",
+        },
+        timeout=LIVE_INFO_TIMEOUT_SECONDS,
+    )
+    response.raise_for_status()
+    results = response.json().get("results") or []
+    if not results:
+        raise ValueError(f"Weather location not found: {requested_location}")
 
-    parts = [city, region]
+    result = results[0]
+    label_parts = [result.get("name", ""), result.get("admin1", "")]
     if WEATHER_INCLUDE_COUNTRY:
-        parts.append(country)
+        label_parts.append(result.get("country", ""))
+    label = ", ".join(part for part in label_parts if part)
 
-    parts = [part for part in parts if part]
-    if parts:
-        return ", ".join(parts)
+    return float(result["latitude"]), float(result["longitude"]), label
 
-    if requested_location == "auto":
-        return "your location"
 
-    return requested_location.replace("+", " ")
+def _nws_get(url):
+    response = requests.get(
+        url,
+        headers={
+            "Accept": "application/geo+json",
+            "User-Agent": WEATHER_NWS_USER_AGENT,
+        },
+        timeout=LIVE_INFO_TIMEOUT_SECONDS,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def _parse_nws_timestamp(value):
+    if not value:
+        return None
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def _fahrenheit(celsius):
+    if celsius is None:
+        return None
+    return round((float(celsius) * 9.0 / 5.0) + 32.0)
+
+
+def _latest_fresh_observation(station_urls):
+    now = datetime.now(timezone.utc)
+
+    for station_url in station_urls[:WEATHER_STATION_SEARCH_LIMIT]:
+        try:
+            payload = _nws_get(f"{station_url}/observations/latest")
+            observation = payload.get("properties") or {}
+            observed_at = _parse_nws_timestamp(observation.get("timestamp"))
+            temperature = (observation.get("temperature") or {}).get("value")
+
+            if observed_at is None or temperature is None:
+                continue
+
+            age_minutes = (now - observed_at.astimezone(timezone.utc)).total_seconds() / 60
+            if age_minutes < -10 or age_minutes > WEATHER_MAX_OBSERVATION_AGE_MINUTES:
+                continue
+
+            return observation, observed_at
+        except Exception:
+            continue
+
+    raise RuntimeError("No fresh NWS station observation was available")
 
 
 def get_weather_summary(command):
     requested_location = _normalize_location(_extract_weather_location(command))
-    url = f"https://wttr.in/{requested_location}?format=j1"
 
     try:
-        response = requests.get(url, timeout=LIVE_INFO_TIMEOUT_SECONDS)
-        response.raise_for_status()
-        payload = response.json()
+        latitude, longitude, location_text = _geocode_weather_location(
+            requested_location
+        )
+        point = (_nws_get(f"https://api.weather.gov/points/{latitude},{longitude}")
+                 .get("properties") or {})
+        stations_payload = _nws_get(point["observationStations"])
+        station_urls = [
+            feature.get("id")
+            for feature in stations_payload.get("features") or []
+            if feature.get("id")
+        ]
+        current, observed_at = _latest_fresh_observation(station_urls)
     except Exception:
         return "I couldn't fetch live weather right now."
 
-    current = (payload.get("current_condition") or [{}])[0]
-    description = (current.get("weatherDesc") or [{}])[0].get("value", "unknown")
-    temp_f = current.get("temp_F", "?")
-    feels_f = current.get("FeelsLikeF", "?")
-    humidity = current.get("humidity", "?")
-    location_text = _resolve_location_text(payload, requested_location)
+    description = current.get("textDescription") or "unknown conditions"
+    temp_f = _fahrenheit((current.get("temperature") or {}).get("value"))
+    feels_c = (current.get("heatIndex") or {}).get("value")
+    if feels_c is None:
+        feels_c = (current.get("windChill") or {}).get("value")
+    feels_f = _fahrenheit(feels_c)
+    humidity = (current.get("relativeHumidity") or {}).get("value")
+
+    try:
+        local_time = observed_at.astimezone(ZoneInfo(point["timeZone"]))
+    except Exception:
+        local_time = observed_at
+
+    observed_text = local_time.strftime("%-I:%M %p")
+    details = f"{description}, {temp_f} degrees Fahrenheit"
+    if feels_f is not None:
+        details += f", feels like {feels_f}"
+    if humidity is not None:
+        details += f", humidity {round(float(humidity))} percent"
 
     return (
-        f"Current weather in {location_text}: {description}, {temp_f} degrees Fahrenheit, "
-        f"feels like {feels_f}, humidity {humidity} percent."
+        f"Current weather in {location_text}, observed at {observed_text}: "
+        f"{details}."
     )
 
 

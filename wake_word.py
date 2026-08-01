@@ -9,8 +9,12 @@ import sounddevice as sd
 from config import (
     CONTINUOUS_CAPTURE_AFTER_WAKE,
     EMOTION_LISTENING,
+    ENABLE_HEAD_TRACKING,
     EZRA_PREFERENCE_FLOOR,
     FORCE_HEY_EZRA_SCORE,
+    HEAD_TRACKING_SAMPLE_INTERVAL_SECONDS,
+    HEAD_TRACKING_WAKE_SETTLE_SECONDS,
+    HEAD_TRACKING_WAKE_HISTORY_SECONDS,
     HEY_EZRA_DOMINANCE_MARGIN,
     HEY_EZRA_MIN_SCORE,
     POST_WAKE_AUDIO_SECONDS_EZRA,
@@ -29,6 +33,7 @@ from config import (
     WAKE_END_SILENCE as END_SILENCE,
     WAKE_ACTIVE_RMS_THRESHOLD as ACTIVE_RMS_THRESHOLD,
     WAKE_MAX_COMMAND_TIME as MAX_COMMAND_TIME,
+    MIC_DEVICE as ALSA_MIC_DEVICE,
     WAKE_MIC_DEVICE as MIC_DEVICE,
     WAKE_MIC_OPEN_RETRIES as MIC_OPEN_RETRIES,
     WAKE_MIC_RELEASE_DELAY as MIC_RELEASE_DELAY,
@@ -45,6 +50,11 @@ from respeaker_io import create_respeaker_or_raise
 from robot import eyelids
 from robot import eyes
 from robot import robot_emotions
+
+if ENABLE_HEAD_TRACKING:
+    from robot.head_tracking import head_tracker
+else:
+    head_tracker = None
 
 # =========================
 # RESPEAKER
@@ -268,29 +278,53 @@ def open_microphone():
 
     last_error = None
 
-    for attempt in range(1, MIC_OPEN_RETRIES + 1):
-        try:
-            stream = sd.InputStream(
-                device=MIC_DEVICE,
-                samplerate=SAMPLE_RATE,
-                channels=CHANNELS,
-                dtype="float32",
-                blocksize=BLOCK_SIZE,
-                callback=audio_callback,
-            )
+    mic_candidates = [MIC_DEVICE, ALSA_MIC_DEVICE, "default", None]
 
-            stream.start()
-            return stream
+    # Keep order but drop duplicates.
+    deduped_candidates = []
+    for candidate in mic_candidates:
+        if candidate not in deduped_candidates:
+            deduped_candidates.append(candidate)
 
-        except sd.PortAudioError as e:
-            last_error = e
-
-            if attempt < MIC_OPEN_RETRIES:
-                print(
-                    f"⚠️ Microphone busy — retrying "
-                    f"({attempt}/{MIC_OPEN_RETRIES})..."
+    for mic_device in deduped_candidates:
+        for attempt in range(1, MIC_OPEN_RETRIES + 1):
+            try:
+                stream = sd.InputStream(
+                    device=mic_device,
+                    samplerate=SAMPLE_RATE,
+                    channels=CHANNELS,
+                    dtype="float32",
+                    blocksize=BLOCK_SIZE,
+                    callback=audio_callback,
                 )
-                time.sleep(MIC_RETRY_DELAY)
+
+                stream.start()
+                return stream
+
+            except sd.PortAudioError as e:
+                last_error = e
+                err_text = str(e).lower()
+
+                if "no input device matching" in err_text:
+                    print(
+                        f"⚠️ Mic '{mic_device}' was not found; "
+                        "trying next microphone source..."
+                    )
+                    break
+
+                if "invalid sample rate" in err_text:
+                    print(
+                        f"⚠️ Mic '{mic_device}' does not support {SAMPLE_RATE} Hz; "
+                        "trying next microphone source..."
+                    )
+                    break
+
+                if attempt < MIC_OPEN_RETRIES:
+                    print(
+                        f"⚠️ Microphone busy on '{mic_device}' — retrying "
+                        f"({attempt}/{MIC_OPEN_RETRIES})..."
+                    )
+                    time.sleep(MIC_RETRY_DELAY)
 
     raise last_error
 
@@ -344,6 +378,16 @@ def run(return_audio=False):
     )
 
     model.predict(flush_audio)
+
+    wake_direction_history = deque(
+        maxlen=max(
+            1,
+            round(
+                HEAD_TRACKING_WAKE_HISTORY_SECONDS
+                / HEAD_TRACKING_SAMPLE_INTERVAL_SECONDS
+            ),
+        )
+    )
 
     def capture_command_same_stream(seed_audio):
         """
@@ -481,6 +525,14 @@ def run(return_audio=False):
 
             rms = float(np.sqrt(np.mean(audio_buffer**2)))
 
+            if (
+                head_tracker is not None
+                and angle is not None
+                and speech
+                and rms >= ACTIVE_RMS_THRESHOLD
+            ):
+                wake_direction_history.append(float(angle))
+
             predictions = model.predict(audio_int16)
 
             ezra_score = float(predictions.get("ezra", 0.0))
@@ -546,7 +598,6 @@ def run(return_audio=False):
                     pending_wake = False
                     armed = False
                     history.clear()
-
                     if sleeping:
                         wake_up()
                         sleeping = False
@@ -565,7 +616,40 @@ def run(return_audio=False):
                         post_wake_audio_seconds = POST_WAKE_AUDIO_SECONDS_EZRA
                         wake_tail_trim_seconds = WAKE_TAIL_TRIM_SECONDS_EZRA
 
-                    time.sleep(post_wake_audio_seconds)
+                    # The XVF3800 bearing/LED settles just after the wake phrase
+                    # ends. Preserve those final readings instead of freezing
+                    # the earlier angle from the model-detection instant.
+                    post_wake_started_at = time.monotonic()
+                    settled_wake_angles = list(wake_direction_history)
+                    settle_until = post_wake_started_at + min(
+                        HEAD_TRACKING_WAKE_SETTLE_SECONDS,
+                        post_wake_audio_seconds,
+                    )
+                    while time.monotonic() < settle_until:
+                        try:
+                            doa = mic.read("DOA_VALUE")
+                            if len(doa) != 2:
+                                raise RuntimeError(
+                                    "Expected (angle, speech) DOA_VALUE response, "
+                                    f"received: {doa!r}"
+                                )
+                            settled_wake_angles.append(float(doa[0]))
+                        except Exception as e:
+                            print(f"⚠️ Wake direction settle error: {e}")
+                        time.sleep(HEAD_TRACKING_SAMPLE_INTERVAL_SECONDS)
+
+                    if head_tracker is not None:
+                        try:
+                            head_tracker.turn_toward_wake(settled_wake_angles)
+                        except Exception as e:
+                            print(f"⚠️ Head tracking movement error: {e}")
+
+                    remaining_post_wake = max(
+                        0.0,
+                        post_wake_audio_seconds
+                        - (time.monotonic() - post_wake_started_at),
+                    )
+                    time.sleep(remaining_post_wake)
 
                     # Include a small pre-detection span plus post-wake span so
                     # continuous speech like "ezra what time..." keeps the first word.

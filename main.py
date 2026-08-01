@@ -1,14 +1,15 @@
-from datetime import datetime
+import shutil
+import subprocess
 
 import state
 
 from audio import listen
 from audio_debug import playback_diagnostic, save_debug_wav
+from command import handle_local_command
 from command_normalization import is_wake_word_only, strip_wake_word
 from config import *
 from ezra_brain import ask_ezra
 from ezra_emotion import set_emotion, set_temporary_emotion
-from live_info import get_live_info_response
 from stt import transcribe
 from tts import speak
 from wake_word import (
@@ -44,28 +45,49 @@ def maybe_playback_diagnostic(debug_audio=None):
     playback_diagnostic()
 
 
-def handle_local_command(command):
-    """
-    Handle commands that do not need GPT.
+def log_speaker_output_sanity():
+    """Print a quick, non-blocking speaker routing sanity check."""
 
-    Returns True if handled here.
-    """
+    print(f"🔊 Configured speaker device: {SPEAKER_DEVICE}")
 
-    text_lower = command.lower()
+    if shutil.which("aplay") is None:
+        print("⚠️ 'aplay' not found in PATH; TTS playback will fail.")
 
-    if "what time" in text_lower or "time is it" in text_lower:
-        now = datetime.now().strftime("%I:%M %p")
-        speak(f"It is {now}")
-        reset_idle_timer()
-        return True
+    if SPEAKER_DEVICE != "default":
+        print(
+            "⚠️ Using a fixed ALSA output device. If USB/audio routing changes, "
+            "playback may fail until the device name is updated."
+        )
+        return
 
-    live_info_response = get_live_info_response(text_lower)
-    if live_info_response:
-        speak(live_info_response)
-        reset_idle_timer()
-        return True
+    if shutil.which("wpctl") is None:
+        print(
+            "⚠️ 'wpctl' not found in PATH; cannot verify current PipeWire default sink."
+        )
+        return
 
-    return False
+    try:
+        result = subprocess.run(
+            ["wpctl", "get-default"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=1.5,
+        )
+    except subprocess.TimeoutExpired:
+        print("⚠️ Timed out while checking PipeWire default sink.")
+        return
+    except subprocess.CalledProcessError:
+        # Some ALSA "default" setups do not have a PipeWire default sink to
+        # report. Playback can still work, so keep this optional check quiet.
+        return
+
+    sink = result.stdout.strip()
+
+    if sink:
+        print(f"🔊 PipeWire default sink: {sink}")
+    else:
+        print("⚠️ PipeWire returned an empty default sink value.")
 
 
 def shutdown_robot():
@@ -76,6 +98,11 @@ def shutdown_robot():
     print("\n🛑 Shutting down Ezra...")
 
     try:
+        if ENABLE_HEAD_TRACKING:
+            from robot.head_tracking import head_tracker
+
+            head_tracker.center()
+
         from robot import robot_emotions
 
         robot_emotions.stop(
@@ -89,6 +116,7 @@ def shutdown_robot():
 
 def main():
     print("🤖 Ezra ready!\n")
+    log_speaker_output_sanity()
     interaction_count = 0
 
     try:
@@ -160,13 +188,6 @@ def main():
                 continue
 
             print(f"📝 Command: {command}")
-
-            text_lower = command.lower()
-
-            # Check for shutdown phrases.
-            if any(keyword in text_lower for keyword in QUIT_KEYWORDS):
-                speak(GOODBYE_TEXT)
-                break
 
             if not command_was_transcribed:
                 set_emotion(EMOTION_THINKING)

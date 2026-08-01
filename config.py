@@ -20,10 +20,10 @@ ENABLE_MID_RESPONSE_STOP = True
 # =========================
 
 # ALSA microphone input device
-MIC_DEVICE = "plughw:3,0"
+MIC_DEVICE = "plughw:2,0"
 
-# ALSA speaker output device
-SPEAKER_DEVICE = "plughw:CARD=UACDemoV10,DEV=0"
+# ALSA speaker output device. Use the PipeWire/ALSA default selected by wpctl.
+SPEAKER_DEVICE = "default"
 
 
 # =========================
@@ -151,6 +151,13 @@ TTS_START_DELAY = 0.05
 # Split long responses into smaller TTS files so playback starts sooner.
 TTS_CHUNK_MAX_CHARS = 140
 
+# Drive mouth shapes from short loudness windows in Piper's generated WAV.
+TTS_MOUTH_SYNC_WINDOW_SECONDS = 0.04
+TTS_MOUTH_SYNC_OFFSET_SECONDS = 0.03
+TTS_MOUTH_NOISE_GATE_RMS = 0.012
+TTS_MOUTH_REFERENCE_PERCENTILE = 90.0
+TTS_MOUTH_LEVEL_GAMMA = 0.70
+
 
 # =========================
 # EMOTIONS
@@ -171,6 +178,16 @@ EMOTION_THINKING = "thinking"
 # Show a smile briefly after upbeat/curious AI responses finish speaking.
 POST_RESPONSE_SMILE_SECONDS = 5.0
 POST_RESPONSE_SMILE_EMOTIONS = ("happy", "curious")
+
+
+# =========================
+# EYELID MOTION
+# =========================
+
+# Time for each closing/opening half of a blink. This runs only in the
+# background face-animation thread and does not block audio or Whisper.
+EYELID_BLINK_TRAVEL_SECONDS = 0.12
+EYELID_BLINK_STEPS = 8
 
 
 # =========================
@@ -285,7 +302,7 @@ DEBUG_AUDIO_SAMPLE_RATE = 16000
 # WAKE PIPELINE
 # =========================
 
-WAKE_MIC_DEVICE = 1
+WAKE_MIC_DEVICE = 0
 WAKE_SAMPLE_RATE = 16000
 WAKE_CHANNELS = 1
 WAKE_BLOCK_SIZE = 1024
@@ -321,7 +338,8 @@ POST_WAKE_AUDIO_SECONDS_HEY_EZRA = 1.35
 WAKE_TAIL_TRIM_SECONDS_EZRA = 0.00
 WAKE_TAIL_TRIM_SECONDS_HEY_EZRA = 0.00
 
-SLEEP_TIMEOUT = 20
+# Time until Ezra goes to sleep
+SLEEP_TIMEOUT = 60
 
 WAKE_MIC_OPEN_RETRIES = 8
 WAKE_MIC_RETRY_DELAY = 0.25
@@ -332,7 +350,7 @@ WAKE_MIC_RELEASE_DELAY = 0.08
 # LISTEN PIPELINE
 # =========================
 
-LISTEN_MIC_DEVICE = 1
+LISTEN_MIC_DEVICE = 0
 LISTEN_SAMPLE_RATE = 16000
 LISTEN_CHANNELS = 1
 LISTEN_BLOCKSIZE = 1024
@@ -345,6 +363,32 @@ LISTEN_START_RMS_THRESHOLD = 0.008
 LISTEN_ACTIVE_RMS_THRESHOLD = 0.0055
 LISTEN_END_SILENCE = 0.95
 LISTEN_END_POST_ROLL_SECONDS = 0.60
+
+
+# =========================
+# HEAD TRACKING
+# =========================
+
+ENABLE_HEAD_TRACKING = True
+
+# Installed ReSpeaker orientation and Ezra head-coordinate convention.
+HEAD_TRACKING_MIC_FORWARD_AZIMUTH = 180.0
+HEAD_TRACKING_DIRECTION = 1.0
+
+HEAD_TRACKING_MAX_YAW_DEGREES = 90.0
+HEAD_TRACKING_MAX_DOA_DEGREES = 90.0
+HEAD_TRACKING_CENTER_DEADBAND_DEGREES = 8.0
+
+HEAD_TRACKING_SAMPLE_INTERVAL_SECONDS = 0.05
+HEAD_TRACKING_WAKE_HISTORY_SECONDS = 1.10
+HEAD_TRACKING_WAKE_SETTLE_SECONDS = 0.50
+HEAD_TRACKING_MIN_SPEECH_SECONDS = 0.6
+HEAD_TRACKING_MIN_CONTINUOUS_SPEECH_SECONDS = 0.2
+HEAD_TRACKING_MIN_ACTIVE_AUDIO_SECONDS = 0.4
+HEAD_TRACKING_AVERAGE_SECONDS = 0.25
+
+HEAD_TRACKING_STEP_DEGREES = 2.0
+HEAD_TRACKING_STEP_DELAY_SECONDS = 0.035
 
 
 # =========================
@@ -365,6 +409,15 @@ NEWS_RSS_FEEDS = (
 
 # Weather location for generic requests; "auto" uses IP-based location.
 DEFAULT_WEATHER_LOCATION = "Plano"
+
+# Default coordinates avoid a geocoding request for the usual weather command.
+DEFAULT_WEATHER_LATITUDE = 33.020
+DEFAULT_WEATHER_LONGITUDE = -96.699
+
+# National Weather Service requests require an identifying User-Agent.
+WEATHER_NWS_USER_AGENT = "Ezra personal home assistant"
+WEATHER_MAX_OBSERVATION_AGE_MINUTES = 180
+WEATHER_STATION_SEARCH_LIMIT = 5
 
 # Include country name in spoken weather location.
 WEATHER_INCLUDE_COUNTRY = False

@@ -10,7 +10,8 @@ import numpy as np
 import sounddevice as sd
 
 from config import *
-from ezra_emotion import set_emotion
+from ezra_emotion import set_emotion, set_talk_level
+from mouth_sync import build_mouth_envelope
 from respeaker_io import create_respeaker_or_raise
 import state
 
@@ -205,9 +206,7 @@ def _monitor_stop_phrase(stop_event, ready_event=None):
 
                 predictions = _stop_model.predict(audio_int16)
                 stop_score, _ = _prediction_stop_score(predictions)
-                vad_speech = (
-                    ENABLE_MID_RESPONSE_VAD_ASSIST and _read_respeaker_speech()
-                )
+                vad_speech = ENABLE_MID_RESPONSE_VAD_ASSIST and _read_respeaker_speech()
 
                 threshold = MID_RESPONSE_STOP_GUARD_THRESHOLD
                 if vad_speech:
@@ -279,28 +278,74 @@ def _generate_speech_file(text):
     return True
 
 
-def _play_speech_file(stop_event):
-    proc = subprocess.Popen(
-        ["aplay", "-D", SPEAKER_DEVICE, "temp.wav"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+def _play_speech_file(stop_event, mouth_envelope, mouth_frame_seconds):
+    device_candidates = [SPEAKER_DEVICE, "default", None]
+    deduped_candidates = []
 
-    state.tts_process = proc
+    for candidate in device_candidates:
+        if candidate not in deduped_candidates:
+            deduped_candidates.append(candidate)
 
-    try:
-        while proc.poll() is None:
-            if stop_event.is_set():
-                proc.terminate()
-                try:
-                    proc.wait(timeout=0.3)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                return True
-            time.sleep(0.02)
-    finally:
-        state.tts_process = None
+    for device in deduped_candidates:
+        cmd = ["aplay", "temp.wav"]
+        device_label = "system-default"
 
+        if device is not None:
+            cmd = ["aplay", "-D", device, "temp.wav"]
+            device_label = str(device)
+
+        set_talk_level(0.0)
+
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except OSError as e:
+            print(f"⚠️ TTS playback launch failed on '{device_label}': {e}")
+            continue
+
+        state.tts_process = proc
+        playback_started_at = time.monotonic()
+        last_mouth_index = -1
+
+        try:
+            while proc.poll() is None:
+                playback_elapsed = time.monotonic() - playback_started_at
+                if playback_elapsed < TTS_MOUTH_SYNC_OFFSET_SECONDS:
+                    set_talk_level(0.0)
+                else:
+                    mouth_elapsed = playback_elapsed - TTS_MOUTH_SYNC_OFFSET_SECONDS
+                    mouth_index = min(
+                        len(mouth_envelope) - 1,
+                        int(mouth_elapsed / mouth_frame_seconds),
+                    )
+                    if mouth_index != last_mouth_index:
+                        set_talk_level(float(mouth_envelope[mouth_index]))
+                        last_mouth_index = mouth_index
+
+                if stop_event.is_set():
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=0.3)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                    return True
+                time.sleep(0.02)
+        finally:
+            state.tts_process = None
+            set_talk_level(0.0)
+
+        if proc.returncode == 0:
+            return False
+
+        print(
+            f"⚠️ TTS playback failed on '{device_label}' "
+            f"(exit {proc.returncode}); trying fallback..."
+        )
+
+    print("⚠️ TTS playback failed on all output device attempts")
     return False
 
 
@@ -341,15 +386,27 @@ def speak(text, allow_mid_response_stop=True):
             if not _generate_speech_file(chunk):
                 break
 
+            try:
+                mouth_envelope, mouth_frame_seconds = build_mouth_envelope("temp.wav")
+            except Exception as e:
+                print(f"⚠️ TTS mouth sync disabled for this chunk: {e}")
+                mouth_envelope = np.ones(1, dtype=np.float32) * 0.5
+                mouth_frame_seconds = max(0.01, TTS_MOUTH_SYNC_WINDOW_SECONDS)
+
             if TTS_START_DELAY > 0:
                 time.sleep(TTS_START_DELAY)
             set_emotion(EMOTION_TALKING)
 
-            if stop_event.is_set() or _play_speech_file(stop_event):
+            if stop_event.is_set() or _play_speech_file(
+                stop_event,
+                mouth_envelope,
+                mouth_frame_seconds,
+            ):
                 interrupted_by_stop = True
                 break
     finally:
         stop_event.set()
+        set_talk_level(0.0)
         if monitor_thread is not None:
             monitor_thread.join(timeout=0.5)
         _flush_stop_model()

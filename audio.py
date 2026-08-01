@@ -130,8 +130,12 @@ def listen(wake_audio=None, wake_text="EZRA"):
 
             # Check ReSpeaker hardware VAD.
             doa = mic.read("DOA_VALUE")
+            if len(doa) != 2:
+                raise RuntimeError(
+                    f"Expected (angle, speech) DOA_VALUE response, received: {doa!r}"
+                )
             vad_speech = bool(doa[1])
-            angle = doa[0] if len(doa) > 0 else None
+            angle = doa[0]
 
             # Debug: print VAD state changes
             if last_vad_speech is None or vad_speech != last_vad_speech:

@@ -1,5 +1,5 @@
-# calibration.py — 4 eye servos + 2 eyelid servos (arrow keys for all)
-
+# calibration.py — eye, eyelid, and head-turn servo calibration
+7
 import json
 import os
 import time
@@ -28,12 +28,18 @@ DEFAULT_CAL = {
         "right_v": {"center": 90, "low": 60, "high": 120},
         "lid_l": {"center": 100, "low": 20, "high": 140, "wide_open": 140},
         "lid_r": {"center": 100, "low": 20, "high": 140, "wide_open": 140},
+        "head_turn": {"center": 90, "low": 60, "high": 120},
     },
     "gaze": {
         "left_h": {"left": 60, "center": 90, "right": 120},
         "right_h": {"left": 60, "center": 90, "right": 120},
         "left_v": {"up": 60, "center": 90, "down": 120},
         "right_v": {"up": 60, "center": 90, "down": 120},
+    },
+    "head": {
+        "left": 60,
+        "center": 90,
+        "right": 120,
     },
 }
 
@@ -44,6 +50,7 @@ SERVO_CHANNELS = {
     "right_v": CH_EYE_RIGHT_V,
     "lid_l": CH_LID_LEFT,
     "lid_r": CH_LID_RIGHT,
+    "head_turn": CH_HEAD_TURN,
 }
 
 EYE_GAZE_LABELS = {
@@ -69,6 +76,11 @@ def _sync_servo_limits(cal, key):
     cal["servos"][key]["high"] = max(values)
 
 
+def _sync_head_limits(cal):
+    cal["servos"]["head_turn"]["low"] = min(cal["head"].values())
+    cal["servos"]["head_turn"]["high"] = max(cal["head"].values())
+
+
 def _normalize_cal(cal):
     merged = _copy_default_cal()
 
@@ -89,6 +101,8 @@ def _normalize_cal(cal):
             }
 
         _sync_servo_limits(merged, key)
+
+    _sync_head_limits(merged)
 
     return merged
 
@@ -170,6 +184,11 @@ def _load_txt_cal():
         CH_LID_RIGHT, "closed", cal["servos"]["lid_r"]["low"]
     )
 
+    cal["head"]["left"] = value(CH_HEAD_TURN, "left", cal["head"]["left"])
+    cal["head"]["center"] = cal["servos"]["head_turn"]["center"]
+    cal["head"]["right"] = value(CH_HEAD_TURN, "right", cal["head"]["right"])
+    _sync_head_limits(cal)
+
     for key in EYE_GAZE_LABELS:
         _sync_servo_limits(cal, key)
 
@@ -211,6 +230,9 @@ def save_cal(cal):
                 f.write(f"{channel}:open={cal['servos'][key]['high']}\n")
                 f.write(f"{channel}:wide_open={cal['servos'][key]['wide_open']}\n")
                 f.write(f"{channel}:closed={cal['servos'][key]['low']}\n")
+            elif key == "head_turn":
+                f.write(f"{channel}:left={cal['head']['left']}\n")
+                f.write(f"{channel}:right={cal['head']['right']}\n")
 
     print("\nSaved calibration.txt")
 
@@ -221,16 +243,101 @@ def _ensure_servos_initialized():
     return servos.init()
 
 
-def _move_all_servos_to_centers(cal):
+def _move_all_servos_to_centers(cal, current_angles=None):
     angles = {}
 
     for key, channel in SERVO_CHANNELS.items():
         angle = cal["servos"][key]["center"]
-        servos.set_servo_angle(channel, angle)
+        if key == "head_turn" and current_angles is not None:
+            _move_head_slow(current_angles[key], angle)
+        else:
+            servos.set_servo_angle(channel, angle)
         angles[key] = angle
         time.sleep(0.02)
 
     return angles
+
+
+def _move_all_servos_to_file_test_pose(cal, current_angles=None):
+    """Eyes to saved centers, eyelids to saved open position for quick testing."""
+    angles = {}
+
+    for key, channel in SERVO_CHANNELS.items():
+        if key in ("lid_l", "lid_r"):
+            angle = cal["servos"][key]["high"]
+        else:
+            angle = cal["servos"][key]["center"]
+
+        if key == "head_turn" and current_angles is not None:
+            _move_head_slow(current_angles[key], angle)
+        else:
+            servos.set_servo_angle(channel, angle)
+        angles[key] = angle
+        time.sleep(0.02)
+
+    return angles
+
+
+def _move_eye_test_pose(cal, direction):
+    """Move both eyes to one saved gaze direction without changing calibration."""
+    positions = {
+        "U": (("left_v", "up"), ("right_v", "up")),
+        "D": (("left_v", "down"), ("right_v", "down")),
+        "L": (("left_h", "left"), ("right_h", "left")),
+        "R": (("left_h", "right"), ("right_h", "right")),
+    }
+    moved = {}
+
+    if direction == "C":
+        targets = tuple((key, "center") for key in EYE_GAZE_LABELS)
+    else:
+        targets = positions[direction]
+
+    for key, position in targets:
+        angle = cal["gaze"][key][position]
+        servos.set_servo_angle(SERVO_CHANNELS[key], angle)
+        moved[key] = angle
+        time.sleep(0.02)
+
+    return moved
+
+
+def _move_eyelid_test_pose(cal, position):
+    """Move both eyelids to a saved position without changing calibration."""
+    field = {"O": "high", "B": "low", "W": "wide_open"}[position]
+    moved = {}
+
+    for key in ("lid_l", "lid_r"):
+        angle = cal["servos"][key][field]
+        servos.set_servo_angle(SERVO_CHANNELS[key], angle)
+        moved[key] = angle
+        time.sleep(0.02)
+
+    return moved
+
+
+def _move_head_slow(current_angle, target_angle):
+    """Move the head gradually between two angles."""
+    angle = float(current_angle)
+    step = 1.0 if target_angle >= angle else -1.0
+
+    while (step > 0 and angle < target_angle) or (step < 0 and angle > target_angle):
+        angle += step
+        if (step > 0 and angle > target_angle) or (step < 0 and angle < target_angle):
+            angle = target_angle
+        servos.set_servo_angle(CH_HEAD_TURN, angle)
+        time.sleep(0.04)
+
+    # Also write the target when already there, and avoid accumulated float error.
+    servos.set_servo_angle(CH_HEAD_TURN, target_angle)
+
+
+def _move_head_test_pose(cal, position, current_angle):
+    """Move the head slowly to a saved position without changing calibration."""
+    field = {"L": "left", "R": "right", "C": "center"}[position]
+    target_angle = cal["head"][field]
+    _move_head_slow(current_angle, target_angle)
+    return {"head_turn": target_angle}
 
 
 def center_all_servos_natural():
@@ -273,6 +380,7 @@ def calibrate():
         ("Right Eye Vertical", CH_EYE_RIGHT_V, "right_v"),
         ("Left Eyelid", CH_LID_LEFT, "lid_l"),
         ("Right Eyelid", CH_LID_RIGHT, "lid_r"),
+        ("Head Turn", CH_HEAD_TURN, "head_turn"),
     ]
 
     angles = {key: cal["servos"][key]["center"] for _, _, key in servolist}
@@ -282,16 +390,22 @@ def calibrate():
     print("Select servo:")
     print("  1–4 = eye servos")
     print("  5–6 = eyelid servos")
+    print("  7 = head turn servo")
     print("Move:")
     print("  Up/Down arrows = move selected servo")
     print("Mark eye direction:")
     print("  c = center")
     print("  l/r = horizontal look-left/look-right")
     print("  u/d = vertical look-up/look-down")
+    print("  For head turn: c = center, l = left, r = right")
     print("Mark eyelids:")
     print("  w = wide open, o = open, b = closed")
+    print("Test saved positions (does not change calibration):")
+    print("  Shift+U/D/L/R/C = both eyes up/down/left/right/center")
+    print("  With servo 7 selected, Shift+L/R/C = head left/right/center")
+    print("  Shift+O/B/W = both eyelids open/closed/wide open")
     print("Center all:")
-    print("  n = natural centers, f = file centers")
+    print("  n = natural centers, f = file test pose (eyes center + lids open)")
     print("Other:")
     print("  s = save, q = quit\n")
 
@@ -303,16 +417,17 @@ def calibrate():
 
         k = get_key()
 
-        if k == "q":
-            print("\nExiting calibration.")
+        if k in ("q", "Q"):
+            servos.shutdown()
+            print("\nServo PWM off. Exiting calibration.")
             break
 
-        if k in "123456":
+        if k in "1234567":
             idx = int(k) - 1
             continue
 
         if k == "n":
-            centered = center_all_servos_natural()
+            centered = _move_all_servos_to_centers(_copy_default_cal(), angles)
             if centered:
                 angles.update(centered)
                 print("\nAll servos moved to natural centers.")
@@ -320,9 +435,25 @@ def calibrate():
 
         if k == "f":
             cal = load_cal()
-            centered = _move_all_servos_to_centers(cal)
+            centered = _move_all_servos_to_file_test_pose(cal, angles)
             angles.update(centered)
-            print("\nAll servos moved to saved calibration centers.")
+            print("\nApplied saved file test pose (eyes center, lids open).")
+            continue
+
+        if k in "UDLRC":
+            names = {"U": "up", "D": "down", "L": "left", "R": "right", "C": "center"}
+            if key == "head_turn" and k in "LRC":
+                angles.update(_move_head_test_pose(cal, k, angle))
+                print(f"\nMoved head {names[k]} using saved calibration.")
+            else:
+                angles.update(_move_eye_test_pose(cal, k))
+                print(f"\nMoved both eyes {names[k]} using saved calibration.")
+            continue
+
+        if k in "OBW":
+            angles.update(_move_eyelid_test_pose(cal, k))
+            names = {"O": "open", "B": "closed", "W": "wide open"}
+            print(f"\nMoved both eyelids {names[k]} using saved calibration.")
             continue
 
         # === MODIFIED SECTION ===
@@ -340,6 +471,9 @@ def calibrate():
             if key in EYE_GAZE_LABELS:
                 cal["gaze"][key]["center"] = angle
                 _sync_servo_limits(cal, key)
+            elif key == "head_turn":
+                cal["head"]["center"] = angle
+                _sync_head_limits(cal)
             print(f"\nCenter for {label} = {angle}")
 
         if key in ("left_h", "right_h"):
@@ -363,6 +497,17 @@ def calibrate():
                 cal["gaze"][key]["down"] = angle
                 _sync_servo_limits(cal, key)
                 print(f"\nLook-down for {label} = {angle}")
+
+        if key == "head_turn":
+            if k == "l":
+                cal["head"]["left"] = angle
+                _sync_head_limits(cal)
+                print(f"\nLeft for {label} = {angle}")
+
+            if k == "r":
+                cal["head"]["right"] = angle
+                _sync_head_limits(cal)
+                print(f"\nRight for {label} = {angle}")
 
         if key in ("lid_l", "lid_r"):
             if k == "w":

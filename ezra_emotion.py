@@ -35,3 +35,14 @@ def set_temporary_emotion(emotion, seconds, fallback_emotion=EMOTION_STANDBY):
 
     except Exception as e:
         print(f"Emotion error: {e}")
+
+
+def set_talk_level(level):
+    """Set the live TTS mouth opening from zero (closed) to one (wide)."""
+    if state.shutting_down:
+        return
+
+    try:
+        robot_emotions.set_talk_level(level)
+    except Exception as e:
+        print(f"Mouth sync error: {e}")
