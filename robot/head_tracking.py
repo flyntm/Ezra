@@ -7,7 +7,6 @@ from config import (
     HEAD_TRACKING_AVERAGE_SECONDS,
     HEAD_TRACKING_CENTER_DEADBAND_DEGREES,
     HEAD_TRACKING_DIRECTION,
-    HEAD_TRACKING_MAX_DOA_DEGREES,
     HEAD_TRACKING_MAX_YAW_DEGREES,
     HEAD_TRACKING_MIC_FORWARD_AZIMUTH,
     HEAD_TRACKING_MIN_ACTIVE_AUDIO_SECONDS,
@@ -53,6 +52,11 @@ class HeadTracker:
         self._consecutive_speech_samples = 0
         self._max_consecutive_speech_samples = 0
         self._active_audio_samples = 0
+
+    @property
+    def current_yaw(self):
+        """Current logical head yaw in degrees for diagnostics."""
+        return self._current_yaw
 
     def observe(self, raw_angle, respeaker_speech, rms):
         """Record one DoA sample synchronized with the capture stream's RMS."""
@@ -128,6 +132,10 @@ class HeadTracker:
         correction = _circular_mean_degrees(bearings)
         return self._turn_by_correction(correction, source="wake word")
 
+    def turn_toward_bearing(self, bearing, source="command"):
+        """Apply an already normalized bearing as a relative correction."""
+        return self._turn_by_correction(float(bearing), source=source)
+
     def _turn_by_correction(self, correction, source):
         if abs(correction) <= HEAD_TRACKING_CENTER_DEADBAND_DEGREES:
             print(
@@ -136,17 +144,21 @@ class HeadTracker:
             )
             return False
 
-        target_yaw = self._current_yaw + correction
-        if abs(correction) > HEAD_TRACKING_MAX_DOA_DEGREES:
-            print(f"👂 Ignoring rear {source} direction {correction:+.1f}°")
-            return False
+        requested_yaw = self._current_yaw + correction
+        target_yaw = _clamp(
+            requested_yaw,
+            -HEAD_TRACKING_MAX_YAW_DEGREES,
+            HEAD_TRACKING_MAX_YAW_DEGREES,
+        )
 
-        if not (
-            -HEAD_TRACKING_MAX_YAW_DEGREES
-            <= target_yaw
-            <= HEAD_TRACKING_MAX_YAW_DEGREES
-        ):
-            print(f"👂 Ignoring unreachable head target {target_yaw:+.1f}°")
+        if target_yaw != requested_yaw:
+            print(
+                f"👂 Clamping unreachable {source} target "
+                f"{requested_yaw:+.1f}° to {target_yaw:+.1f}°"
+            )
+
+        if abs(target_yaw - self._current_yaw) < 0.01:
+            print(f"👂 Head already at {target_yaw:+.1f}° limit")
             return False
 
         print(

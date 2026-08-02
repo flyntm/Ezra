@@ -260,22 +260,51 @@ def _split_tts_text(text):
     return chunks or [text]
 
 
-def _generate_speech_file(text):
+def _apply_pronunciation_overrides(text):
+    """Apply whole-word, case-insensitive respellings only for Piper input."""
+    spoken_text = str(text)
+
+    for written, pronunciation in TTS_PRONUNCIATION_OVERRIDES.items():
+        pattern = rf"(?<!\w){re.escape(written)}(?!\w)"
+        spoken_text = re.sub(
+            pattern,
+            lambda _match, replacement=pronunciation: replacement,
+            spoken_text,
+            flags=re.IGNORECASE,
+        )
+
+    return spoken_text
+
+
+def generate_speech_file(text, output_file="temp.wav"):
+    """Generate one Piper WAV, optionally for a reusable personality cache."""
     if state.shutting_down:
         return False
 
-    cmd = (
-        f'echo "{text}" | '
-        f"{PIPER_PATH} "
-        f"--model {TTS_MODEL_PATH} "
-        f"--output_file temp.wav"
-    )
+    text = _apply_pronunciation_overrides(text)
+    cmd = [
+        os.path.expanduser(PIPER_PATH),
+        "--model",
+        os.path.expanduser(TTS_MODEL_PATH),
+        "--length_scale",
+        str(TTS_LENGTH_SCALE),
+        "--output_file",
+        os.fspath(output_file),
+    ]
+    try:
+        result = subprocess.run(
+            cmd,
+            input=text,
+            text=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError as e:
+        print(f"⚠️ TTS generation failed: {e}")
+        return False
 
-    subprocess.run(
-        cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-    )
-
-    return True
+    return result.returncode == 0 and os.path.exists(output_file)
 
 
 def _play_speech_file(stop_event, mouth_envelope, mouth_frame_seconds):
@@ -383,7 +412,7 @@ def speak(text, allow_mid_response_stop=True):
                 interrupted_by_stop = True
                 break
 
-            if not _generate_speech_file(chunk):
+            if not generate_speech_file(chunk):
                 break
 
             try:

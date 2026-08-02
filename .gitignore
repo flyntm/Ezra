@@ -1,5 +1,6 @@
 ezra-env/
 __pycache__/
+.cache/
 *.pyc
 temp.wav
 chunk.wav

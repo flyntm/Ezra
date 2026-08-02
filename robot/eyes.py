@@ -38,6 +38,7 @@ _last_lh = 90
 _last_lv = 90
 _last_rh = 90
 _last_rv = 90
+_gaze_override = None
 
 
 def init():
@@ -82,6 +83,10 @@ def _gaze_targets(h, v):
 def center():
     global _last_lh, _last_lv, _last_rh, _last_rv
 
+    if _gaze_override is not None:
+        gaze(*_gaze_override)
+        return
+
     if CAL:
         lh = CAL["servos"]["left_h"]["center"]
         lv = CAL["servos"]["left_v"]["center"]
@@ -102,11 +107,26 @@ def gaze(h, v):
     look(*_gaze_targets(h, v))
 
 
+def set_gaze_override(h, v):
+    """Lock all eye-animation requests to one logical gaze target."""
+    global _gaze_override
+    _gaze_override = (float(h), float(v))
+    gaze_smooth(*_gaze_override, steps=10, duration=0.12)
+
+
+def clear_gaze_override():
+    global _gaze_override
+    _gaze_override = None
+
+
 # ---------------------------------------------------------
 # Instant movement
 # ---------------------------------------------------------
 def look(lh, lv, rh, rv):
     global _last_lh, _last_lv, _last_rh, _last_rv
+
+    if _gaze_override is not None:
+        lh, lv, rh, rv = _gaze_targets(*_gaze_override)
 
     lh = _clamp_servo("left_h",  lh)
     lv = _clamp_servo("left_v",  lv)
@@ -127,6 +147,9 @@ def look(lh, lv, rh, rv):
 def look_smooth(lh, lv, rh, rv, steps=40, duration=0.3):
     """Move both eyes smoothly with coordinated servo updates."""
     global _last_lh, _last_lv, _last_rh, _last_rv
+
+    if _gaze_override is not None:
+        lh, lv, rh, rv = _gaze_targets(*_gaze_override)
 
     # Clamp targets
     target_lh = _clamp_servo("left_h",  lh)
@@ -172,6 +195,9 @@ def gaze_smooth(h, v, steps=60, duration=0.35):
 def look_smooth_sequential(lh, lv, rh, rv, steps=40, duration=0.3):
     """Move left eye, then right eye to minimize simultaneous current draw."""
     global _last_lh, _last_lv, _last_rh, _last_rv
+
+    if _gaze_override is not None:
+        lh, lv, rh, rv = _gaze_targets(*_gaze_override)
 
     target_lh = _clamp_servo("left_h",  lh)
     target_lv = _clamp_servo("left_v",  lv)

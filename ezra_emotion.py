@@ -1,5 +1,5 @@
 import state
-from config import EMOTION_STANDBY
+from config import EMOTION_STANDBY, VERBOSE_RUNTIME_LOGS
 from robot import robot_emotions
 
 print("🤖 Starting robot emotions...")
@@ -11,7 +11,8 @@ def set_emotion(emotion):
     if state.shutting_down:
         return
 
-    print(f"👀 Emotion: {emotion}")
+    if VERBOSE_RUNTIME_LOGS:
+        print(f"👀 Emotion: {emotion}")
 
     try:
         robot_emotions.set_emotion(emotion)
@@ -24,7 +25,8 @@ def set_temporary_emotion(emotion, seconds, fallback_emotion=EMOTION_STANDBY):
     if state.shutting_down:
         return
 
-    print(f"👀 Emotion: {emotion} for {seconds:.1f}s")
+    if VERBOSE_RUNTIME_LOGS:
+        print(f"👀 Emotion: {emotion} for {seconds:.1f}s")
 
     try:
         robot_emotions.set_temporary_emotion(

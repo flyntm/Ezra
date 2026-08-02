@@ -106,6 +106,7 @@ class RobotEmotionController:
         self._lid_open_amount = 1.0
         self._next_standby_gaze_at = 0.0
         self._next_listening_gaze_at = 0.0
+        self._external_gaze = None
 
     @property
     def emotion(self):
@@ -236,6 +237,17 @@ class RobotEmotionController:
             else:
                 self._external_talk_level = max(0.0, min(1.0, float(level)))
 
+    def set_external_gaze(self, horizontal, vertical=86.0):
+        """Hold an externally selected gaze until explicitly cleared."""
+        with self._lock:
+            self._external_gaze = (float(horizontal), float(vertical))
+            eyes.set_gaze_override(*self._external_gaze)
+
+    def clear_external_gaze(self):
+        with self._lock:
+            self._external_gaze = None
+            eyes.clear_gaze_override()
+
     def speak(self):
         return self.set_emotion("normal_talking")
 
@@ -292,6 +304,9 @@ class RobotEmotionController:
                 self._tick_thinking(now, t)
             elif emotion == "wake":
                 pass  # 👈 HOLD the pose, no animation
+
+            if self._external_gaze is not None:
+                eyes.gaze(*self._external_gaze)
 
     def _run_loop(self):
         while True:
@@ -800,6 +815,14 @@ def stop(clear_mouth=True, relax_servos=False):
 
 def set_emotion(emotion):
     return _default_controller.set_emotion(emotion)
+
+
+def set_external_gaze(horizontal, vertical=86.0):
+    return _default_controller.set_external_gaze(horizontal, vertical)
+
+
+def clear_external_gaze():
+    return _default_controller.clear_external_gaze()
 
 
 def set_temporary_emotion(emotion, seconds, fallback_emotion="standby"):

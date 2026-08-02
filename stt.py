@@ -7,7 +7,12 @@ import numpy as np
 import scipy.io.wavfile as wav
 from faster_whisper import WhisperModel
 
-from config import DEBUG_AUDIO_SAMPLE_RATE, DEBUG_WAV_FILE
+from config import DEBUG_AUDIO_SAMPLE_RATE, DEBUG_WAV_FILE, VERBOSE_RUNTIME_LOGS
+
+
+def _debug(message):
+    if VERBOSE_RUNTIME_LOGS:
+        print(message)
 
 # --------------------------------------------------
 # CONFIG
@@ -84,7 +89,7 @@ def transcribe(audio):
     total_start = time.time()
 
     try:
-        print("🧠 Transcribing...")
+        _debug("🧠 Transcribing...")
 
         if audio is None:
             print("⚠️ No audio supplied to STT")
@@ -111,9 +116,9 @@ def transcribe(audio):
         peak = float(np.max(np.abs(audio_16k)))
         rms = float(np.sqrt(np.mean(audio_16k**2)))
 
-        print(f"Audio length: {duration:.2f} sec")
-        print(f"Audio peak: {peak:.6f}")
-        print(f"Audio RMS: {rms:.6f}")
+        _debug(f"Audio length: {duration:.2f} sec")
+        _debug(f"Audio peak: {peak:.6f}")
+        _debug(f"Audio RMS: {rms:.6f}")
 
         # Normalize audio to a target peak to improve STT accuracy.
         # Always scale so the maximum peak is near 0.9 (about -1 dBFS).
@@ -123,8 +128,9 @@ def transcribe(audio):
             audio_16k = np.clip(audio_16k * gain, -1.0, 1.0)
             peak = float(np.max(np.abs(audio_16k)))
             rms = float(np.sqrt(np.mean(audio_16k**2)))
-            print(
-                f"🔊 Normalized to peak {target_peak:.2f} (gain x{gain:.2f}), new peak {peak:.6f}"
+            _debug(
+                f"🔊 Normalized to peak {target_peak:.2f} "
+                f"(gain x{gain:.2f}), new peak {peak:.6f}"
             )
 
         # --------------------------------------------------
@@ -156,12 +162,12 @@ def transcribe(audio):
         )
 
         if peak < 0.10:
-            print(
+            _debug(
                 "⚠️ Low input level detected. "
                 "Check microphone gain, proximity, and ambient noise."
             )
 
-        print(f"💾 Saved Whisper input to " f"{DEBUG_WAV_FILE}")
+        _debug(f"💾 Saved Whisper input to {DEBUG_WAV_FILE}")
 
         # --------------------------------------------------
         # WHISPER
@@ -199,7 +205,7 @@ def transcribe(audio):
 
         whisper_elapsed = time.time() - whisper_start
 
-        print(f"⏱️ Whisper decoding took " f"{whisper_elapsed:.2f} sec")
+        _debug(f"⏱️ Whisper decoding took {whisper_elapsed:.2f} sec")
 
         text = " ".join(
             segment.text.strip() for segment in segments if segment.text.strip()
@@ -207,13 +213,13 @@ def transcribe(audio):
 
         total_elapsed = time.time() - total_start
 
-        print(f"⏱️ Total STT took " f"{total_elapsed:.2f} sec")
+        _debug(f"⏱️ Total STT took {total_elapsed:.2f} sec")
 
         if not text:
             print("⚠️ No speech recognized")
             return ""
 
-        print(f"You said: {text}")
+        _debug(f"You said: {text}")
 
         return text
 

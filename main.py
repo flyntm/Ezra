@@ -1,5 +1,7 @@
 import shutil
 import subprocess
+import threading
+import time
 
 import state
 
@@ -10,10 +12,14 @@ from command_normalization import is_wake_word_only, strip_wake_word
 from config import *
 from ezra_brain import ask_ezra
 from ezra_emotion import set_emotion, set_temporary_emotion
+from item_tests import display_command_text_diagnostic, display_doa_diagnostic
 from stt import transcribe
+from thinking_comments import prepare_thinking_comments, start_comment
 from tts import speak
 from wake_word import (
     CONTINUOUS_CAPTURE_AFTER_WAKE,
+    get_last_command_doa as get_last_continuous_command_doa,
+    get_last_command_doa_diagnostic,
     reset_idle_timer,
     wait_for_wake_word_with_audio,
 )
@@ -43,6 +49,28 @@ def maybe_playback_diagnostic(debug_audio=None):
         save_debug_wav(debug_audio)
 
     playback_diagnostic()
+
+
+def stop_thinking_comment(cancel_event, comment_thread):
+    """Cancel a pending comment, but allow a started comment to finish."""
+    if cancel_event is None:
+        return
+
+    if (
+        comment_thread is not None
+        and comment_thread.comment_started_event.is_set()
+    ):
+        # Once Ezra starts a sentence, finishing it sounds more natural than
+        # cutting it off when transcription or the AI response completes.
+        comment_thread.join(timeout=10.0)
+        if not comment_thread.is_alive():
+            return
+
+        print("⚠️ Thinking comment timed out; stopping playback")
+
+    cancel_event.set()
+    if comment_thread is not None:
+        comment_thread.join(timeout=0.30)
 
 
 def log_speaker_output_sanity():
@@ -98,7 +126,10 @@ def shutdown_robot():
     print("\n🛑 Shutting down Ezra...")
 
     try:
-        if ENABLE_HEAD_TRACKING:
+        if (
+            ENABLE_HEAD_TRACKING
+            and not ENABLE_INTERACTION_DIAGNOSTIC
+        ):
             from robot.head_tracking import head_tracker
 
             head_tracker.center()
@@ -115,6 +146,7 @@ def shutdown_robot():
 
 
 def main():
+    prepare_thinking_comments()
     print("🤖 Ezra ready!\n")
     log_speaker_output_sanity()
     interaction_count = 0
@@ -127,9 +159,36 @@ def main():
 
             interaction_count += 1
 
-            print(f"\n🧪 Wake/listen probe #{interaction_count}")
+            if VERBOSE_RUNTIME_LOGS:
+                print(f"\n🧪 Wake/listen probe #{interaction_count}")
+                print(f"DEBUG wake text: [{wake_text}]")
 
-            print(f"DEBUG wake text: [{wake_text}]")
+            # ITEM TEST 1: continuous capture has already gathered the complete
+            # utterance and its DoA samples. Report them before Whisper/STT or
+            # any command/response processing occurs.
+            if ENABLE_DOA_DIAGNOSTIC:
+                command_doa = get_last_continuous_command_doa()
+                doa_diagnostic = get_last_command_doa_diagnostic()
+                display_doa_diagnostic(
+                    wake_text,
+                    command_doa,
+                    doa_diagnostic,
+                )
+                reset_idle_timer()
+                continue
+
+            # ITEM TEST 3: wake_word.py has already applied any qualified wake
+            # and post-wake command corrections. Report the resulting yaw and
+            # re-arm without transcription or response processing.
+            if ENABLE_HEAD_DIRECTION_DIAGNOSTIC:
+                from robot.head_tracking import head_tracker
+
+                print(
+                    f'🧪 HEAD DIRECTION TEST | Wake: "{wake_text}" | '
+                    f"Final yaw: {head_tracker.current_yaw:+.1f}°"
+                )
+                reset_idle_timer()
+                continue
 
             reset_idle_timer()
             set_emotion(EMOTION_LISTENING)
@@ -137,6 +196,9 @@ def main():
             # Check whether the wake result also contained a command.
             command = strip_wake_word(wake_text)
             command_was_transcribed = False
+            comment_cancel = None
+            comment_thread = None
+            thinking_started_at = None
 
             # Usually the command is spoken after the wake word.
             if not command:
@@ -158,20 +220,31 @@ def main():
 
                 # Convert the command audio to text.
                 set_emotion(EMOTION_THINKING)
+                if ENABLE_THINKING_COMMENTS:
+                    thinking_started_at = time.monotonic()
+                    comment_cancel = threading.Event()
+                    comment_thread = start_comment(
+                        comment_cancel,
+                        THINKING_COMMENT_DELAY_SECONDS,
+                    )
                 command_was_transcribed = True
                 text = transcribe(audio)
-                print(f"🧪 STT raw text: [{text}]")
+                if VERBOSE_RUNTIME_LOGS:
+                    print(f"🧪 STT raw text: [{text}]")
 
                 if not text:
+                    stop_thinking_comment(comment_cancel, comment_thread)
                     set_emotion(EMOTION_STANDBY)
                     continue
 
                 command = strip_wake_word(text)
-                print(f"🧪 STT stripped command: [{command}]")
+                if VERBOSE_RUNTIME_LOGS:
+                    print(f"🧪 STT stripped command: [{command}]")
 
                 # Ignore recordings containing only the wake word.
                 if is_wake_word_only(command):
                     print("⚠️ Wake word only — " "returning to standby")
+                    stop_thinking_comment(comment_cancel, comment_thread)
                     set_emotion(EMOTION_STANDBY)
                     continue
 
@@ -184,21 +257,57 @@ def main():
             # Ignore empty or unclear commands.
             if len(command) < 2:
                 print("⚠️ Ignoring short or unclear input")
+                stop_thinking_comment(comment_cancel, comment_thread)
                 set_emotion(EMOTION_STANDBY)
                 continue
 
             print(f"📝 Command: {command}")
 
+            # ITEM TEST 2: show the transcribed command, but do not execute it
+            # or produce any response or head movement.
+            if ENABLE_COMMAND_TEXT_DIAGNOSTIC:
+                stop_thinking_comment(comment_cancel, comment_thread)
+                display_command_text_diagnostic(command)
+                reset_idle_timer()
+                continue
+
             if not command_was_transcribed:
                 set_emotion(EMOTION_THINKING)
 
             # Handle simple commands locally.
+            comment_was_started = False
+            if command_was_transcribed:
+                comment_was_started = bool(
+                    comment_thread is not None
+                    and comment_thread.comment_started_event.is_set()
+                )
+                stop_thinking_comment(comment_cancel, comment_thread)
+                comment_cancel = None
+                comment_thread = None
+
             if handle_local_command(command):
                 # Run optional audio replay diagnostics after Ezra responds.
                 maybe_playback_diagnostic()
                 continue
 
             # Send all other commands to Ezra's brain.
+            if comment_cancel is None and not comment_was_started:
+                comment_cancel = threading.Event()
+                if ENABLE_THINKING_COMMENTS:
+                    elapsed_thinking = (
+                        time.monotonic() - thinking_started_at
+                        if thinking_started_at is not None
+                        else 0.0
+                    )
+                    comment_thread = start_comment(
+                        comment_cancel,
+                        max(
+                            0.0,
+                            THINKING_COMMENT_DELAY_SECONDS - elapsed_thinking,
+                        ),
+                    )
+            elif comment_cancel is None:
+                comment_cancel = threading.Event()
             try:
                 result = ask_ezra(command)
 
@@ -209,6 +318,8 @@ def main():
                 speak("I'm sorry. I had trouble answering that.")
                 reset_idle_timer()
                 continue
+            finally:
+                stop_thinking_comment(comment_cancel, comment_thread)
 
             # Make sure the brain returned a dictionary.
             if not isinstance(result, dict):

@@ -5,8 +5,50 @@
 # Reduce startup chatter from hardware/model initialization logs.
 QUIET_STARTUP = False
 
+# Show detailed audio, wake-model, STT timing, and probe logs.
+VERBOSE_RUNTIME_LOGS = False
+
 # Toggle post-command audio replay diagnostics.
 ENABLE_PLAYBACK_DIAGNOSTICS = False
+
+# Item test 1: report the wake/utterance direction without running speech-to-text,
+# command handling, AI response, TTS, or head movement. Set to False to restore
+# normal operation.
+ENABLE_DOA_DIAGNOSTIC = False
+
+# Item test 2: transcribe and display the recorded command, then stop before
+# command handling, AI, TTS, or head movement.
+ENABLE_COMMAND_TEXT_DIAGNOSTIC = False
+
+# Item test 3: exercise wake/command head direction, report final yaw, and skip
+# STT, command handling, AI, and TTS. Unlike the other diagnostics, head motion
+# intentionally remains enabled.
+ENABLE_HEAD_DIRECTION_DIAGNOSTIC = False
+
+# Shared guard used to keep the head stationary in either diagnostic.
+ENABLE_INTERACTION_DIAGNOSTIC = ENABLE_DOA_DIAGNOSTIC or ENABLE_COMMAND_TEXT_DIAGNOSTIC
+
+# While Ezra is idle and waiting, glance toward qualified ambient speech using
+# only the eyes. Wake-word and command interactions continue to use the head.
+ENABLE_SOUND_GAZE = True
+# Hold the eyes centered while waiting so ambient sound glances are unmistakable.
+# The lock is released as soon as a wake word starts an interaction.
+SOUND_GAZE_TEST_MODE = False
+SOUND_GAZE_MAX_BEARING_DEGREES = 90.0
+SOUND_GAZE_MAX_EYE_OFFSET = 28.0
+# Below 1.0 makes medium bearings more visible while retaining proportionality.
+SOUND_GAZE_RESPONSE_EXPONENT = 0.85
+SOUND_GAZE_VERTICAL_POSITION = 86.0
+SOUND_GAZE_AMBIENT_MIN_SPEECH_SECONDS = 0.40
+SOUND_GAZE_AMBIENT_HOLD_SECONDS = 2.5
+SOUND_GAZE_AMBIENT_COOLDOWN_SECONDS = 2.5
+SOUND_GAZE_AMBIENT_RESET_SILENCE_SECONDS = 0.35
+
+# A DoA is diagnostic-worthy only after enough VAD-backed speech and a stable
+# group of recent bearings. These values can be tuned from test observations.
+COMMAND_DOA_MIN_ACTIVE_SPEECH_SECONDS = 0.40
+COMMAND_DOA_STABILITY_WINDOW_SECONDS = 0.25
+COMMAND_DOA_MAX_CIRCULAR_DEVIATION_DEGREES = 15.0
 
 # Enable live web lookups for weather/news style requests.
 ENABLE_LIVE_INFO = True
@@ -143,10 +185,32 @@ WHISPER_LANGUAGE = "en"
 PIPER_PATH = "~/projects/piper_tts/piper"
 
 # Path to voice model
-TTS_MODEL_PATH = "~/projects/piper_tts/en_US-lessac-medium.onnx"
+TTS_MODEL_PATH = "/home/flyntm/projects/ezra/voices/en_US-bryce-medium.onnx"
+
+#  Talking Speed - Piper phoneme duration. Lower is faster; 1.0 is the voice model's default.
+TTS_LENGTH_SCALE = 0.7
+
+# Optional personality comments played while a non-local AI request is pending.
+# Audio is generated once and cached. Pending comments are canceled when work
+# finishes, but a comment that has started is allowed to finish naturally.
+ENABLE_THINKING_COMMENTS = True
+THINKING_COMMENT_DELAY_SECONDS = 0.45
+THINKING_COMMENTS = (
+    "Let me see what I can find.",
+    "I'll need to think about that.",
+    "Hmm, let me give that some thought.",
+    "Give me a second.",
+)
+
+# TTS-only respellings for names Piper pronounces incorrectly. The original
+# response text remains unchanged in logs and conversation history.
+TTS_PRONUNCIATION_OVERRIDES = {
+    "Plano": "Play-no",
+}
 
 # Delay before playback (seconds)
 TTS_START_DELAY = 0.05
+
 
 # Split long responses into smaller TTS files so playback starts sooner.
 TTS_CHUNK_MAX_CHARS = 140
@@ -376,7 +440,6 @@ HEAD_TRACKING_MIC_FORWARD_AZIMUTH = 180.0
 HEAD_TRACKING_DIRECTION = 1.0
 
 HEAD_TRACKING_MAX_YAW_DEGREES = 90.0
-HEAD_TRACKING_MAX_DOA_DEGREES = 90.0
 HEAD_TRACKING_CENTER_DEADBAND_DEGREES = 8.0
 
 HEAD_TRACKING_SAMPLE_INTERVAL_SECONDS = 0.05

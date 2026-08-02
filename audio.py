@@ -1,5 +1,6 @@
-import time
+import math
 import queue
+import time
 from collections import deque
 
 import numpy as np
@@ -14,12 +15,39 @@ from config import (
     LISTEN_END_SILENCE as END_SILENCE,
     LISTEN_MAX_COMMAND_TIME as MAX_COMMAND_TIME,
     LISTEN_MIC_DEVICE as MIC_DEVICE,
+    HEAD_TRACKING_DIRECTION,
+    HEAD_TRACKING_MIC_FORWARD_AZIMUTH,
     LISTEN_PRE_ROLL_SECONDS,
     LISTEN_SAMPLE_RATE as SAMPLE_RATE,
     LISTEN_START_RMS_THRESHOLD as START_RMS_THRESHOLD,
     QUIET_STARTUP,
+    VERBOSE_RUNTIME_LOGS,
 )
 from respeaker_io import create_respeaker_or_raise
+
+
+# Most recently completed command bearing. This small diagnostic state keeps
+# listen()'s existing return type unchanged for all current callers.
+_last_command_doa = None
+
+
+def get_last_command_doa():
+    """Return the last command's signed DoA, or None when it was unavailable."""
+    return _last_command_doa
+
+
+def _mean_doa(raw_angles):
+    """Average circular microphone angles and convert them to a signed bearing."""
+    if not raw_angles:
+        return None
+    sin_sum = sum(math.sin(math.radians(angle)) for angle in raw_angles)
+    cos_sum = sum(math.cos(math.radians(angle)) for angle in raw_angles)
+    raw_mean = math.degrees(math.atan2(sin_sum, cos_sum)) % 360.0
+    relative = (
+        raw_mean - HEAD_TRACKING_MIC_FORWARD_AZIMUTH + 180.0
+    ) % 360.0 - 180.0
+    return HEAD_TRACKING_DIRECTION * relative
+
 
 # --------------------------------------------------
 # RESPEAKER SETUP
@@ -47,9 +75,13 @@ def listen(wake_audio=None, wake_text="EZRA"):
     capture path.
     """
 
+    global _last_command_doa
+    _last_command_doa = None
+
     print("👂 Listening for command (ReSpeaker VAD)...")
 
     frames = []
+    command_doa_samples = []
     wake_audio_rms = 0.0
 
     if wake_audio is not None and len(wake_audio) > 0:
@@ -137,8 +169,19 @@ def listen(wake_audio=None, wake_text="EZRA"):
             vad_speech = bool(doa[1])
             angle = doa[0]
 
+            # Keep only bearings supported by both hardware VAD and audible
+            # command energy. Circular averaging avoids the 359°/0° boundary.
+            if (
+                command_started
+                and vad_speech
+                and last_block_rms >= ACTIVE_RMS_THRESHOLD
+            ):
+                command_doa_samples.append(angle)
+
             # Debug: print VAD state changes
-            if last_vad_speech is None or vad_speech != last_vad_speech:
+            if VERBOSE_RUNTIME_LOGS and (
+                last_vad_speech is None or vad_speech != last_vad_speech
+            ):
                 if vad_speech:
                     print(f"🎤 VAD=ON (angle={angle})")
                 else:
@@ -231,8 +274,11 @@ def listen(wake_audio=None, wake_text="EZRA"):
     peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
     rms = float(np.sqrt(np.mean(audio**2))) if len(audio) else 0.0
 
-    print(f"Recording length: {duration:.2f} sec")
-    print(f"Recording peak: {peak:.6f}")
-    print(f"Recording RMS: {rms:.6f}")
+    if VERBOSE_RUNTIME_LOGS:
+        print(f"Recording length: {duration:.2f} sec")
+        print(f"Recording peak: {peak:.6f}")
+        print(f"Recording RMS: {rms:.6f}")
+
+    _last_command_doa = _mean_doa(command_doa_samples)
 
     return audio

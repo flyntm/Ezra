@@ -1,4 +1,5 @@
 import contextlib
+import math
 import os
 import time
 from collections import deque
@@ -7,11 +8,20 @@ import numpy as np
 import sounddevice as sd
 
 from config import (
+    COMMAND_DOA_MAX_CIRCULAR_DEVIATION_DEGREES,
+    COMMAND_DOA_MIN_ACTIVE_SPEECH_SECONDS,
+    COMMAND_DOA_STABILITY_WINDOW_SECONDS,
     CONTINUOUS_CAPTURE_AFTER_WAKE,
     EMOTION_LISTENING,
     ENABLE_HEAD_TRACKING,
+    ENABLE_HEAD_DIRECTION_DIAGNOSTIC,
+    ENABLE_DOA_DIAGNOSTIC,
+    ENABLE_INTERACTION_DIAGNOSTIC,
+    ENABLE_SOUND_GAZE,
     EZRA_PREFERENCE_FLOOR,
     FORCE_HEY_EZRA_SCORE,
+    HEAD_TRACKING_DIRECTION,
+    HEAD_TRACKING_MIC_FORWARD_AZIMUTH,
     HEAD_TRACKING_SAMPLE_INTERVAL_SECONDS,
     HEAD_TRACKING_WAKE_SETTLE_SECONDS,
     HEAD_TRACKING_WAKE_HISTORY_SECONDS,
@@ -44,6 +54,16 @@ from config import (
     WAKE_TAIL_TRIM_SECONDS_HEY_EZRA,
     WAKE_THRESHOLD as THRESHOLD,
     QUIET_STARTUP,
+    VERBOSE_RUNTIME_LOGS,
+    SOUND_GAZE_MAX_BEARING_DEGREES,
+    SOUND_GAZE_MAX_EYE_OFFSET,
+    SOUND_GAZE_RESPONSE_EXPONENT,
+    SOUND_GAZE_AMBIENT_COOLDOWN_SECONDS,
+    SOUND_GAZE_AMBIENT_HOLD_SECONDS,
+    SOUND_GAZE_AMBIENT_MIN_SPEECH_SECONDS,
+    SOUND_GAZE_AMBIENT_RESET_SILENCE_SECONDS,
+    SOUND_GAZE_TEST_MODE,
+    SOUND_GAZE_VERTICAL_POSITION,
 )
 from respeaker_io import create_respeaker_or_raise
 
@@ -51,7 +71,10 @@ from robot import eyelids
 from robot import eyes
 from robot import robot_emotions
 
-if ENABLE_HEAD_TRACKING:
+if (
+    ENABLE_HEAD_TRACKING
+    and not ENABLE_INTERACTION_DIAGNOSTIC
+):
     from robot.head_tracking import head_tracker
 else:
     head_tracker = None
@@ -165,6 +188,140 @@ recent_buffer_len = 0
 
 sleeping = False
 last_activity_time = time.time()
+_last_command_doa = None
+_last_command_doa_diagnostic = None
+
+
+def get_last_command_doa():
+    """Return the continuous capture path's most recent signed command DoA."""
+    return _last_command_doa
+
+
+def get_last_command_doa_diagnostic():
+    """Return DoA qualification details for item test 1."""
+    return _last_command_doa_diagnostic
+
+
+def _mean_signed_doa(raw_angles):
+    if not raw_angles:
+        return None
+    sin_sum = sum(math.sin(math.radians(angle)) for angle in raw_angles)
+    cos_sum = sum(math.cos(math.radians(angle)) for angle in raw_angles)
+    raw_mean = math.degrees(math.atan2(sin_sum, cos_sum)) % 360.0
+    relative = (
+        raw_mean - HEAD_TRACKING_MIC_FORWARD_AZIMUTH + 180.0
+    ) % 360.0 - 180.0
+    return HEAD_TRACKING_DIRECTION * relative
+
+
+def _angular_difference(angle, reference):
+    return (float(angle) - float(reference) + 180.0) % 360.0 - 180.0
+
+
+def _qualify_command_doa(samples, stability_samples=None):
+    """Use VAD samples for speech duration and settled samples for direction."""
+    stability_samples = stability_samples or samples
+    active_seconds = sum(duration for _, duration in samples)
+    sample_count = len(samples)
+    result = {
+        "angle": None,
+        "qualified": False,
+        "active_seconds": active_seconds,
+        "sample_count": sample_count,
+        "max_deviation": None,
+        "reason": "no valid VAD-backed DoA samples",
+    }
+
+    if not samples or not stability_samples:
+        return result
+
+    angle = _mean_signed_doa([raw_angle for raw_angle, _ in stability_samples])
+    result["angle"] = angle
+
+    if active_seconds < COMMAND_DOA_MIN_ACTIVE_SPEECH_SECONDS:
+        result["reason"] = (
+            f"needs {COMMAND_DOA_MIN_ACTIVE_SPEECH_SECONDS:.2f}s active speech"
+        )
+        return result
+
+    # Latch the best complete stability window. This preserves the brief,
+    # correct bearing visible on the LEDs even if the idle bearing later drifts.
+    best_window = None
+    for end in range(len(stability_samples)):
+        window = []
+        window_seconds = 0.0
+        for index in range(end, -1, -1):
+            window.append(stability_samples[index])
+            window_seconds += stability_samples[index][1]
+            if window_seconds >= COMMAND_DOA_STABILITY_WINDOW_SECONDS:
+                break
+        if window_seconds < COMMAND_DOA_STABILITY_WINDOW_SECONDS:
+            continue
+
+        window_angles = [raw_angle for raw_angle, _ in window]
+        window_mean = _mean_signed_doa(window_angles)
+        window_deviation = max(
+            abs(_angular_difference(_mean_signed_doa([sample_angle]), window_mean))
+            for sample_angle in window_angles
+        )
+        if best_window is None or window_deviation <= best_window[0]:
+            best_window = (window_deviation, window_mean)
+
+    if best_window is None:
+        result["reason"] = "not enough settled DoA data for stability check"
+        return result
+
+    max_deviation, recent_mean = best_window
+    result["angle"] = recent_mean
+    result["max_deviation"] = max_deviation
+
+    if max_deviation > COMMAND_DOA_MAX_CIRCULAR_DEVIATION_DEGREES:
+        result["reason"] = (
+            f"angles vary by {max_deviation:.1f}° "
+            f"(limit {COMMAND_DOA_MAX_CIRCULAR_DEVIATION_DEGREES:.1f}°)"
+        )
+        return result
+
+    result["qualified"] = True
+    result["reason"] = "stable"
+    return result
+
+
+def _look_toward_wake_sound(active_angles, settled_angles):
+    """Hold an eye-only gaze toward a qualified front-facing speaker."""
+    if not ENABLE_SOUND_GAZE:
+        return False
+
+    active_samples = [
+        (angle, HEAD_TRACKING_SAMPLE_INTERVAL_SECONDS) for angle in active_angles
+    ]
+    settled_samples = [
+        (angle, HEAD_TRACKING_SAMPLE_INTERVAL_SECONDS) for angle in settled_angles
+    ]
+    result = _qualify_command_doa(active_samples, settled_samples)
+    bearing = result.get("angle")
+
+    if not result["qualified"] or bearing is None:
+        if VERBOSE_RUNTIME_LOGS:
+            print(f"👀 Sound gaze skipped: {result['reason']}")
+        return False
+    if abs(bearing) > SOUND_GAZE_MAX_BEARING_DEGREES:
+        if VERBOSE_RUNTIME_LOGS:
+            print(f"👀 Sound gaze ignored rear bearing {bearing:+.1f}°")
+        return False
+
+    fraction = bearing / SOUND_GAZE_MAX_BEARING_DEGREES
+    curved_fraction = math.copysign(
+        abs(fraction) ** SOUND_GAZE_RESPONSE_EXPONENT,
+        fraction,
+    )
+    horizontal = 90.0 + curved_fraction * SOUND_GAZE_MAX_EYE_OFFSET
+    robot_emotions.set_external_gaze(horizontal, SOUND_GAZE_VERTICAL_POSITION)
+    print(
+        f"👀 Looking toward speaker {bearing:+.1f}° "
+        f"(eye gaze {horizontal:.1f})"
+    )
+    return True
 
 
 # =========================
@@ -176,7 +333,8 @@ def reset_idle_timer():
     global last_activity_time
 
     last_activity_time = time.time()
-    print("⏰ IDLE TIMER RESET")
+    if VERBOSE_RUNTIME_LOGS:
+        print("⏰ IDLE TIMER RESET")
 
 
 def enter_sleep():
@@ -388,8 +546,23 @@ def run(return_audio=False):
             ),
         )
     )
+    ambient_gaze_angles = deque(
+        maxlen=max(
+            1,
+            round(
+                1.5 / HEAD_TRACKING_SAMPLE_INTERVAL_SECONDS
+            ),
+        )
+    )
+    ambient_last_speech_at = None
+    ambient_gaze_until = 0.0
+    ambient_cooldown_until = 0.0
 
-    def capture_command_same_stream(seed_audio):
+    def capture_command_same_stream(
+        seed_audio,
+        seed_active_doa_angles=None,
+        seed_settled_doa_angles=None,
+    ):
         """
         Capture command audio from the already-open wake stream.
 
@@ -399,7 +572,42 @@ def run(return_audio=False):
         Wake-word tokens in the transcript are stripped in main.
         """
 
+        global _last_command_doa, _last_command_doa_diagnostic
+        _last_command_doa = None
+        _last_command_doa_diagnostic = None
+
         frames = []
+        # Wake and command are one continuous interaction from the same speaker.
+        # Seed with the settled wake bearing so short commands already contained
+        # in the handoff audio still have a usable direction.
+        command_doa_samples = [
+            (angle, HEAD_TRACKING_SAMPLE_INTERVAL_SECONDS)
+            for angle in (seed_active_doa_angles or ())
+        ]
+        stability_doa_samples = [
+            (angle, HEAD_TRACKING_SAMPLE_INTERVAL_SECONDS)
+            for angle in (seed_settled_doa_angles or ())
+        ]
+        live_command_doa_samples = []
+
+        def finish_command_direction():
+            global _last_command_doa, _last_command_doa_diagnostic
+            _last_command_doa_diagnostic = _qualify_command_doa(
+                command_doa_samples,
+                stability_doa_samples,
+            )
+            _last_command_doa = _last_command_doa_diagnostic["angle"]
+
+            if head_tracker is not None and live_command_doa_samples:
+                command_result = _qualify_command_doa(
+                    live_command_doa_samples,
+                    live_command_doa_samples,
+                )
+                if command_result["qualified"]:
+                    head_tracker.turn_toward_bearing(
+                        command_result["angle"],
+                        source="command",
+                    )
         seed_tail_rms = 0.0
         seed_arr = None
 
@@ -419,7 +627,8 @@ def run(return_audio=False):
 
         if seed_tail_rms >= ACTIVE_RMS_THRESHOLD:
             last_active_time = start_time
-            print(f"🎤 Seed tail active (rms={seed_tail_rms:.4f})")
+            if VERBOSE_RUNTIME_LOGS:
+                print(f"🎤 Seed tail active (rms={seed_tail_rms:.4f})")
 
         while True:
             time.sleep(0.02)
@@ -437,11 +646,23 @@ def run(return_audio=False):
                 frames.append(new_chunk.astype(np.float32, copy=False))
                 chunk_rms = float(np.sqrt(np.mean(new_chunk**2)))
 
+            if chunk_rms >= ACTIVE_RMS_THRESHOLD:
+                try:
+                    doa = mic.read("DOA_VALUE")
+                    if len(doa) == 2 and bool(doa[1]):
+                        sample = (float(doa[0]), 0.02)
+                        command_doa_samples.append(sample)
+                        stability_doa_samples.append(sample)
+                        live_command_doa_samples.append(sample)
+                except Exception as e:
+                    print(f"⚠️ Command direction read error: {e}")
+
             now = time.time()
 
             if chunk_rms >= ACTIVE_RMS_THRESHOLD:
                 if last_active_time is None:
-                    print("🎤 Command speech detected")
+                    if VERBOSE_RUNTIME_LOGS:
+                        print("🎤 Command speech detected")
                 last_active_time = now
             elif last_active_time is None:
                 # No speech seen yet — wait up to COMMAND_TIMEOUT.
@@ -451,6 +672,7 @@ def run(return_audio=False):
                             "⚠️ No post-wake speech detected within timeout — "
                             "using wake handoff audio"
                         )
+                        finish_command_direction()
                         return seed_arr.astype(np.float32, copy=False)
 
                     print("⚠️ No command speech detected within timeout")
@@ -471,7 +693,8 @@ def run(return_audio=False):
                     if post_chunk.size > 0:
                         frames.append(post_chunk.astype(np.float32, copy=False))
 
-                print("🛑 Command ended after silence")
+                if VERBOSE_RUNTIME_LOGS:
+                    print("🛑 Command ended after silence")
                 break
 
             if now - start_time >= MAX_COMMAND_TIME:
@@ -481,7 +704,18 @@ def run(return_audio=False):
         if not frames:
             return None
 
+        finish_command_direction()
         return np.concatenate(frames, axis=0).astype(np.float32, copy=False)
+
+    if ENABLE_SOUND_GAZE and not ENABLE_HEAD_DIRECTION_DIAGNOSTIC:
+        if SOUND_GAZE_TEST_MODE:
+            robot_emotions.set_external_gaze(
+                90.0,
+                SOUND_GAZE_VERTICAL_POSITION,
+            )
+            print("👀 Sound-gaze test ready: eyes held at center")
+        else:
+            robot_emotions.clear_external_gaze()
 
     print("\n✅ Ready")
     print("\n👂 Listening for wake words...\n")
@@ -525,8 +759,56 @@ def run(return_audio=False):
 
             rms = float(np.sqrt(np.mean(audio_buffer**2)))
 
+            if ENABLE_SOUND_GAZE and not ENABLE_HEAD_DIRECTION_DIAGNOSTIC:
+                if angle is not None and speech and rms >= ACTIVE_RMS_THRESHOLD:
+                    ambient_gaze_angles.append(float(angle))
+                    ambient_last_speech_at = current_time
+
+                    active_seconds = (
+                        len(ambient_gaze_angles)
+                        * HEAD_TRACKING_SAMPLE_INTERVAL_SECONDS
+                    )
+                    if (
+                        active_seconds >= SOUND_GAZE_AMBIENT_MIN_SPEECH_SECONDS
+                        and current_time >= ambient_cooldown_until
+                        and not pending_wake
+                    ):
+                        if _look_toward_wake_sound(
+                            list(ambient_gaze_angles),
+                            list(ambient_gaze_angles),
+                        ):
+                            ambient_gaze_until = (
+                                current_time + SOUND_GAZE_AMBIENT_HOLD_SECONDS
+                            )
+                            ambient_cooldown_until = (
+                                current_time + SOUND_GAZE_AMBIENT_COOLDOWN_SECONDS
+                            )
+                            ambient_gaze_angles.clear()
+
+                elif (
+                    ambient_last_speech_at is not None
+                    and current_time - ambient_last_speech_at
+                    >= SOUND_GAZE_AMBIENT_RESET_SILENCE_SECONDS
+                ):
+                    ambient_gaze_angles.clear()
+                    ambient_last_speech_at = None
+
+                if ambient_gaze_until and current_time >= ambient_gaze_until:
+                    if SOUND_GAZE_TEST_MODE:
+                        robot_emotions.set_external_gaze(
+                            90.0,
+                            SOUND_GAZE_VERTICAL_POSITION,
+                        )
+                    else:
+                        robot_emotions.clear_external_gaze()
+                    ambient_gaze_until = 0.0
+
             if (
-                head_tracker is not None
+                (
+                    head_tracker is not None
+                    or ENABLE_DOA_DIAGNOSTIC
+                    or ENABLE_SOUND_GAZE
+                )
                 and angle is not None
                 and speech
                 and rms >= ACTIVE_RMS_THRESHOLD
@@ -572,7 +854,7 @@ def run(return_audio=False):
             history.append(wake_score)
             peak_score = max(history)
 
-            if peak_score > 0.05 or stop_score > 0.05:
+            if VERBOSE_RUNTIME_LOGS and (peak_score > 0.05 or stop_score > 0.05):
                 print(
                     f"🎤 RMS: {rms:.3f} | "
                     f"VAD: {'YES' if speech else 'NO '} | "
@@ -598,6 +880,10 @@ def run(return_audio=False):
                     pending_wake = False
                     armed = False
                     history.clear()
+                    if ENABLE_SOUND_GAZE:
+                        # Ambient eye glances end when an interaction begins;
+                        # qualified wake/command direction belongs to the head.
+                        robot_emotions.clear_external_gaze()
                     if sleeping:
                         wake_up()
                         sleeping = False
@@ -620,7 +906,8 @@ def run(return_audio=False):
                     # ends. Preserve those final readings instead of freezing
                     # the earlier angle from the model-detection instant.
                     post_wake_started_at = time.monotonic()
-                    settled_wake_angles = list(wake_direction_history)
+                    active_wake_angles = list(wake_direction_history)
+                    settled_wake_angles = []
                     settle_until = post_wake_started_at + min(
                         HEAD_TRACKING_WAKE_SETTLE_SECONDS,
                         post_wake_audio_seconds,
@@ -633,14 +920,19 @@ def run(return_audio=False):
                                     "Expected (angle, speech) DOA_VALUE response, "
                                     f"received: {doa!r}"
                                 )
+                            # The XVF3800 LED/bearing commonly settles just
+                            # after VAD turns off. Preserve that final bearing;
+                            # active speech was already measured separately.
                             settled_wake_angles.append(float(doa[0]))
                         except Exception as e:
                             print(f"⚠️ Wake direction settle error: {e}")
                         time.sleep(HEAD_TRACKING_SAMPLE_INTERVAL_SECONDS)
 
-                    if head_tracker is not None:
+                    if head_tracker is not None and not ENABLE_DOA_DIAGNOSTIC:
                         try:
-                            head_tracker.turn_toward_wake(settled_wake_angles)
+                            head_tracker.turn_toward_wake(
+                                active_wake_angles + settled_wake_angles
+                            )
                         except Exception as e:
                             print(f"⚠️ Head tracking movement error: {e}")
 
@@ -667,13 +959,17 @@ def run(return_audio=False):
                     trim_samples = int(wake_tail_trim_seconds * SAMPLE_RATE)
                     if len(wake_audio) > trim_samples:
                         wake_audio = wake_audio[trim_samples:]
-                        print(
-                            f"✂️ Trimmed {wake_tail_trim_seconds:.2f} sec from wake handoff"
-                        )
+                        if VERBOSE_RUNTIME_LOGS:
+                            print(
+                                f"✂️ Trimmed {wake_tail_trim_seconds:.2f} sec "
+                                "from wake handoff"
+                            )
 
-                    print(
-                        f"📼 Captured {len(wake_audio)/SAMPLE_RATE:.2f} sec of post-wake audio"
-                    )
+                    if VERBOSE_RUNTIME_LOGS:
+                        print(
+                            f"📼 Captured {len(wake_audio)/SAMPLE_RATE:.2f} sec "
+                            "of post-wake audio"
+                        )
 
                     # Flush the detected wake word from OpenWakeWord's
                     # internal feature buffer before the next run.
@@ -686,7 +982,11 @@ def run(return_audio=False):
 
                     if return_audio:
                         if CONTINUOUS_CAPTURE_AFTER_WAKE:
-                            command_audio = capture_command_same_stream(wake_audio)
+                            command_audio = capture_command_same_stream(
+                                wake_audio,
+                                active_wake_angles,
+                                settled_wake_angles,
+                            )
                             return phrase, command_audio
 
                         return phrase, wake_audio
