@@ -1,3 +1,4 @@
+import random
 import shutil
 import subprocess
 import threading
@@ -5,17 +6,21 @@ import time
 
 import state
 
-from audio import listen
+from audio import get_last_command_doa, listen
 from audio_debug import playback_diagnostic, save_debug_wav
 from command import handle_local_command
-from command_normalization import is_wake_word_only, strip_wake_word
+from command_normalization import (
+    is_follow_up_cancel,
+    is_wake_word_only,
+    strip_wake_word,
+)
 from config import *
 from ezra_brain import ask_ezra
 from ezra_emotion import set_emotion, set_temporary_emotion
 from item_tests import display_command_text_diagnostic, display_doa_diagnostic
 from stt import transcribe
 from thinking_comments import prepare_thinking_comments, start_comment
-from tts import speak
+from tts import prepare_speech_cache, speak, speak_cached
 from wake_word import (
     CONTINUOUS_CAPTURE_AFTER_WAKE,
     get_last_command_doa as get_last_continuous_command_doa,
@@ -49,6 +54,68 @@ def maybe_playback_diagnostic(debug_audio=None):
         save_debug_wav(debug_audio)
 
     playback_diagnostic()
+
+
+def acknowledge_wake_word(comment_cancel=None, comment_thread=None):
+    """Acknowledge a wake word, then listen once more without requiring it."""
+
+    stop_thinking_comment(comment_cancel, comment_thread)
+    response = random.choice(WAKE_ONLY_RESPONSES)
+    print(f"👂 Wake word only — responding: {response}")
+    set_emotion(EMOTION_LISTENING)
+    speak_cached(response)
+
+    while True:
+        print("👂 Listening for a follow-up command...")
+        audio = listen(wake_text="")
+        if audio is None:
+            break
+
+        set_emotion(EMOTION_THINKING)
+        text = transcribe(audio)
+        if VERBOSE_RUNTIME_LOGS:
+            print(f"🧪 Follow-up STT raw text: [{text}]")
+
+        command = strip_wake_word(text) if text else ""
+        if is_follow_up_cancel(command):
+            print(f"👂 Follow-up ignored or canceled: {command}")
+            break
+
+        if (
+            command
+            and not is_wake_word_only(command)
+            and len(command.split()) >= 2
+        ):
+            follow_up_bearing = get_last_command_doa()
+            if (
+                follow_up_bearing is not None
+                and ENABLE_HEAD_TRACKING
+                and not ENABLE_INTERACTION_DIAGNOSTIC
+            ):
+                from robot.head_tracking import head_tracker
+
+                head_tracker.turn_toward_bearing(
+                    follow_up_bearing,
+                    source="follow-up command",
+                )
+            print(f"👂 Follow-up command received: {command}")
+            return command
+
+        if text and is_wake_word_only(command):
+            print("👂 Repeated wake word — keeping command listener open")
+            set_emotion(EMOTION_LISTENING)
+            reset_idle_timer()
+            continue
+
+        if command:
+            print(f"👂 Ignoring one-word follow-up: {command}")
+
+        break
+
+    print("⏱️ No follow-up command — returning to standby")
+    set_emotion(EMOTION_STANDBY)
+    reset_idle_timer()
+    return None
 
 
 def stop_thinking_comment(cancel_event, comment_thread):
@@ -147,6 +214,7 @@ def shutdown_robot():
 
 def main():
     prepare_thinking_comments()
+    prepare_speech_cache(WAKE_ONLY_RESPONSES)
     print("🤖 Ezra ready!\n")
     log_speaker_output_sanity()
     interaction_count = 0
@@ -183,10 +251,37 @@ def main():
             if ENABLE_HEAD_DIRECTION_DIAGNOSTIC:
                 from robot.head_tracking import head_tracker
 
+                direction = get_last_command_doa_diagnostic() or {}
+                active_angle = direction.get("active_angle")
+                settled_angle = direction.get("settled_angle")
+                agreement = direction.get("settled_agreement")
+                active_label = (
+                    f"{active_angle:+.1f}°" if active_angle is not None else "n/a"
+                )
+                settled_label = (
+                    f"{settled_angle:+.1f}°"
+                    if settled_angle is not None
+                    else "n/a"
+                )
+                agreement_label = (
+                    f"{agreement:.1f}°" if agreement is not None else "n/a"
+                )
+                print(
+                    "🧪 DOA CONFIDENCE | "
+                    f"qualified={direction.get('qualified', False)} | "
+                    f"samples={direction.get('sample_count', 0)} | "
+                    f"active={direction.get('active_seconds', 0.0):.2f}s | "
+                    f"cluster={direction.get('cluster_fraction', 0.0):.0%} | "
+                    f"active bearing={active_label} | "
+                    f"settled bearing={settled_label} | "
+                    f"agreement={agreement_label} | "
+                    f"reason={direction.get('reason', 'unavailable')}"
+                )
                 print(
                     f'🧪 HEAD DIRECTION TEST | Wake: "{wake_text}" | '
                     f"Final yaw: {head_tracker.current_yaw:+.1f}°"
                 )
+                set_emotion(EMOTION_STANDBY)
                 reset_idle_timer()
                 continue
 
@@ -215,38 +310,40 @@ def main():
                         maybe_playback_diagnostic(wake_audio)
 
                     print("⏱️ Timeout waiting for command")
-                    set_emotion(EMOTION_STANDBY)
-                    continue
+                    command = acknowledge_wake_word()
+                    if command is None:
+                        continue
+                    command_was_transcribed = True
+                    thinking_started_at = time.monotonic()
 
                 # Convert the command audio to text.
-                set_emotion(EMOTION_THINKING)
-                if ENABLE_THINKING_COMMENTS:
+                else:
+                    set_emotion(EMOTION_THINKING)
+                    # Record when processing began, but do not start a thinking
+                    # comment until STT confirms that a command actually exists.
+                    # Otherwise a wake-only interaction can say things such as
+                    # "Give me a second" before the listening acknowledgement.
                     thinking_started_at = time.monotonic()
-                    comment_cancel = threading.Event()
-                    comment_thread = start_comment(
-                        comment_cancel,
-                        THINKING_COMMENT_DELAY_SECONDS,
-                    )
-                command_was_transcribed = True
-                text = transcribe(audio)
-                if VERBOSE_RUNTIME_LOGS:
-                    print(f"🧪 STT raw text: [{text}]")
+                    command_was_transcribed = True
+                    text = transcribe(audio)
+                    if VERBOSE_RUNTIME_LOGS:
+                        print(f"🧪 STT raw text: [{text}]")
 
-                if not text:
-                    stop_thinking_comment(comment_cancel, comment_thread)
-                    set_emotion(EMOTION_STANDBY)
-                    continue
+                    command = strip_wake_word(text) if text else ""
+                    if VERBOSE_RUNTIME_LOGS:
+                        print(f"🧪 STT stripped command: [{command}]")
 
-                command = strip_wake_word(text)
-                if VERBOSE_RUNTIME_LOGS:
-                    print(f"🧪 STT stripped command: [{command}]")
-
-                # Ignore recordings containing only the wake word.
-                if is_wake_word_only(command):
-                    print("⚠️ Wake word only — " "returning to standby")
-                    stop_thinking_comment(comment_cancel, comment_thread)
-                    set_emotion(EMOTION_STANDBY)
-                    continue
+                    # A wake-only result gets one follow-up listening turn.
+                    if not command or is_wake_word_only(command):
+                        command = acknowledge_wake_word(
+                            comment_cancel,
+                            comment_thread,
+                        )
+                        comment_cancel = None
+                        comment_thread = None
+                        if command is None:
+                            continue
+                        thinking_started_at = time.monotonic()
 
             else:
                 # Supports wake detection returning a full command.
@@ -257,9 +354,13 @@ def main():
             # Ignore empty or unclear commands.
             if len(command) < 2:
                 print("⚠️ Ignoring short or unclear input")
-                stop_thinking_comment(comment_cancel, comment_thread)
-                set_emotion(EMOTION_STANDBY)
-                continue
+                command = acknowledge_wake_word(comment_cancel, comment_thread)
+                comment_cancel = None
+                comment_thread = None
+                if command is None:
+                    continue
+                command_was_transcribed = True
+                thinking_started_at = time.monotonic()
 
             print(f"📝 Command: {command}")
 

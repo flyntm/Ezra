@@ -7,6 +7,12 @@ import numpy as np
 import sounddevice as sd
 
 from config import (
+    COMMAND_DOA_ACTIVE_CLUSTER_TOLERANCE_DEGREES,
+    COMMAND_DOA_MAX_CIRCULAR_DEVIATION_DEGREES,
+    COMMAND_DOA_MIN_ACTIVE_SPEECH_SECONDS,
+    COMMAND_DOA_MIN_ACTIVE_CLUSTER_FRACTION,
+    COMMAND_DOA_SETTLED_AGREEMENT_DEGREES,
+    COMMAND_DOA_STABILITY_WINDOW_SECONDS,
     LISTEN_ACTIVE_RMS_THRESHOLD as ACTIVE_RMS_THRESHOLD,
     LISTEN_BLOCKSIZE as BLOCKSIZE,
     LISTEN_CHANNELS as CHANNELS,
@@ -17,6 +23,7 @@ from config import (
     LISTEN_MIC_DEVICE as MIC_DEVICE,
     HEAD_TRACKING_DIRECTION,
     HEAD_TRACKING_MIC_FORWARD_AZIMUTH,
+    HEAD_TRACKING_SAMPLE_INTERVAL_SECONDS,
     LISTEN_PRE_ROLL_SECONDS,
     LISTEN_SAMPLE_RATE as SAMPLE_RATE,
     LISTEN_START_RMS_THRESHOLD as START_RMS_THRESHOLD,
@@ -49,6 +56,67 @@ def _mean_doa(raw_angles):
     return HEAD_TRACKING_DIRECTION * relative
 
 
+def _qualified_command_doa(raw_angles):
+    """Return a stable, speech-backed command bearing or None."""
+
+    active_seconds = len(raw_angles) * HEAD_TRACKING_SAMPLE_INTERVAL_SECONDS
+    if active_seconds < COMMAND_DOA_MIN_ACTIVE_SPEECH_SECONDS:
+        return None
+
+    window_samples = max(
+        1,
+        round(
+            COMMAND_DOA_STABILITY_WINDOW_SECONDS
+            / HEAD_TRACKING_SAMPLE_INTERVAL_SECONDS
+        ),
+    )
+    if len(raw_angles) < window_samples:
+        return None
+
+    active_bearings = [_mean_doa([angle]) for angle in raw_angles]
+    dominant_cluster = max(
+        (
+            [
+                bearing
+                for bearing in active_bearings
+                if abs((bearing - center + 180.0) % 360.0 - 180.0)
+                <= COMMAND_DOA_ACTIVE_CLUSTER_TOLERANCE_DEGREES
+            ]
+            for center in active_bearings
+        ),
+        key=len,
+    )
+    if (
+        len(dominant_cluster) / len(active_bearings)
+        < COMMAND_DOA_MIN_ACTIVE_CLUSTER_FRACTION
+    ):
+        return None
+
+    sin_sum = sum(math.sin(math.radians(angle)) for angle in dominant_cluster)
+    cos_sum = sum(math.cos(math.radians(angle)) for angle in dominant_cluster)
+    active_bearing = math.degrees(math.atan2(sin_sum, cos_sum))
+
+    for start in range(
+        len(raw_angles) - window_samples,
+        -1,
+        -1,
+    ):
+        window = raw_angles[start : start + window_samples]
+        bearing = _mean_doa(window)
+        deviation = max(
+            abs((_mean_doa([angle]) - bearing + 180.0) % 360.0 - 180.0)
+            for angle in window
+        )
+        agreement = abs((bearing - active_bearing + 180.0) % 360.0 - 180.0)
+        if (
+            deviation <= COMMAND_DOA_MAX_CIRCULAR_DEVIATION_DEGREES
+            and agreement <= COMMAND_DOA_SETTLED_AGREEMENT_DEGREES
+        ):
+            return bearing
+
+    return None
+
+
 # --------------------------------------------------
 # RESPEAKER SETUP
 # --------------------------------------------------
@@ -77,6 +145,8 @@ def listen(wake_audio=None, wake_text="EZRA"):
 
     global _last_command_doa
     _last_command_doa = None
+
+    from robot import robot_emotions
 
     print("👂 Listening for command (ReSpeaker VAD)...")
 
@@ -175,6 +245,7 @@ def listen(wake_audio=None, wake_text="EZRA"):
                 command_started
                 and vad_speech
                 and last_block_rms >= ACTIVE_RMS_THRESHOLD
+                and not robot_emotions.is_doa_suppressed()
             ):
                 command_doa_samples.append(angle)
 
@@ -279,6 +350,6 @@ def listen(wake_audio=None, wake_text="EZRA"):
         print(f"Recording peak: {peak:.6f}")
         print(f"Recording RMS: {rms:.6f}")
 
-    _last_command_doa = _mean_doa(command_doa_samples)
+    _last_command_doa = _qualified_command_doa(command_doa_samples)
 
     return audio

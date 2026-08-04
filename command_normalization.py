@@ -9,6 +9,24 @@ from config import (
 WAKE_WORDS = set(WAKE_WORD_ALIASES)
 WAKE_SECOND_WORDS = WAKE_WORDS | set(WAKE_SECOND_WORD_VARIANTS)
 WAKE_ONLY_SET = {p.lower().strip() for p in WAKE_ONLY_PHRASES}
+FOLLOW_UP_CANCEL_PHRASES = {
+    "ah",
+    "cancel",
+    "hmm",
+    "never mind",
+    "nevermind",
+    "no",
+    "no thanks",
+    "no thank you",
+    "nope",
+    "nothing",
+    "pfft",
+    "stop",
+    "thats all",
+    "uh",
+    "uh huh",
+    "um",
+}
 
 
 def strip_wake_word(text):
@@ -49,3 +67,12 @@ def is_wake_word_only(command):
     """Check whether the recording contains only a wake phrase."""
 
     return command.lower().strip() in WAKE_ONLY_SET
+
+
+def is_follow_up_cancel(command):
+    """Return True for a declined follow-up or a noise/filler-only transcript."""
+
+    normalized = command.lower().translate(
+        str.maketrans("", "", string.punctuation)
+    )
+    return " ".join(normalized.split()) in FOLLOW_UP_CANCEL_PHRASES

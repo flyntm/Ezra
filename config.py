@@ -28,9 +28,15 @@ ENABLE_HEAD_DIRECTION_DIAGNOSTIC = False
 # Shared guard used to keep the head stationary in either diagnostic.
 ENABLE_INTERACTION_DIAGNOSTIC = ENABLE_DOA_DIAGNOSTIC or ENABLE_COMMAND_TEXT_DIAGNOSTIC
 
+# Freeze eyes, eyelids, and facial animation only for the isolated DoA and
+# command-text diagnostics. Head-direction diagnostics intentionally retain the
+# normal animation path so servo-noise suppression is tested realistically.
+ENABLE_FACE_MOTION_DIAGNOSTIC = ENABLE_INTERACTION_DIAGNOSTIC
+
 # While Ezra is idle and waiting, glance toward qualified ambient speech using
 # only the eyes. Wake-word and command interactions continue to use the head.
 ENABLE_SOUND_GAZE = True
+
 # Hold the eyes centered while waiting so ambient sound glances are unmistakable.
 # The lock is released as soon as a wake word starts an interaction.
 SOUND_GAZE_TEST_MODE = False
@@ -39,16 +45,36 @@ SOUND_GAZE_MAX_EYE_OFFSET = 28.0
 # Below 1.0 makes medium bearings more visible while retaining proportionality.
 SOUND_GAZE_RESPONSE_EXPONENT = 0.85
 SOUND_GAZE_VERTICAL_POSITION = 86.0
+# Ambient gaze needs a stronger signal than wake/command capture because the
+# ReSpeaker hardware VAD can briefly classify quiet-room noise as speech.
+SOUND_GAZE_AMBIENT_MIN_RMS = 0.012
 SOUND_GAZE_AMBIENT_MIN_SPEECH_SECONDS = 0.40
 SOUND_GAZE_AMBIENT_HOLD_SECONDS = 2.5
 SOUND_GAZE_AMBIENT_COOLDOWN_SECONDS = 2.5
 SOUND_GAZE_AMBIENT_RESET_SILENCE_SECONDS = 0.35
+# Ignore microphone/VAD activity briefly after an eyelid blink so nearby servo
+# noise cannot be mistaken for a speaker.
+SOUND_GAZE_BLINK_SUPPRESSION_SECONDS = 0.60
+# Ignore DoA briefly after eye-servo motion as well as eyelid motion.
+DOA_EYE_MOTION_SUPPRESSION_SECONDS = 0.35
+
+# Recover from a transient ReSpeaker USB reset without flooding the terminal.
+RESPEAKER_RECONNECT_INTERVAL_SECONDS = 1.0
+RESPEAKER_ERROR_LOG_INTERVAL_SECONDS = 5.0
 
 # A DoA is diagnostic-worthy only after enough VAD-backed speech and a stable
 # group of recent bearings. These values can be tuned from test observations.
 COMMAND_DOA_MIN_ACTIVE_SPEECH_SECONDS = 0.40
 COMMAND_DOA_STABILITY_WINDOW_SECONDS = 0.25
 COMMAND_DOA_MAX_CIRCULAR_DEVIATION_DEGREES = 15.0
+# Active speech must form one dominant angular cluster, and the final settled
+# bearing must agree with that cluster before a head turn is allowed.
+COMMAND_DOA_ACTIVE_CLUSTER_TOLERANCE_DEGREES = 25.0
+COMMAND_DOA_MIN_ACTIVE_CLUSTER_FRACTION = 0.65
+COMMAND_DOA_SETTLED_AGREEMENT_DEGREES = 25.0
+# A wake-only phrase has less phonetic content than a command, so require a
+# longer speech-backed observation before moving the head from it alone.
+WAKE_ONLY_DOA_MIN_ACTIVE_SPEECH_SECONDS = 0.75
 
 # Enable live web lookups for weather/news style requests.
 ENABLE_LIVE_INFO = True
@@ -99,11 +125,15 @@ MID_RESPONSE_STOP_MODEL_PATH = "/home/flyntm/projects/ezra/ezra_stop.onnx"
 # Mid-response stop sensitivity while Ezra is speaking.
 # Lower threshold/fewer hits than wake-loop stop guard to compensate for
 # speaker echo and overlap during playback.
-MID_RESPONSE_STOP_GUARD_THRESHOLD = 0.10
-MID_RESPONSE_STOP_GUARD_HITS = 1
+MID_RESPONSE_STOP_GUARD_THRESHOLD = 0.35
+MID_RESPONSE_STOP_GUARD_HITS = 2
 
 # Lower stop threshold while ReSpeaker hardware VAD sees active speech.
-MID_RESPONSE_STOP_VAD_ASSIST_THRESHOLD = 0.015
+MID_RESPONSE_STOP_VAD_ASSIST_THRESHOLD = 0.25
+
+# Do not normalize and classify near-silence. Servo and room noise can otherwise
+# be amplified into a convincing stop-model input while Ezra is speaking.
+MID_RESPONSE_STOP_MIN_INPUT_RMS = 0.008
 
 # Boost microphone input used for stop detection while TTS is playing.
 MID_RESPONSE_STOP_MIC_GAIN = 2.5
@@ -162,7 +192,7 @@ PRE_BUFFER_SIZE = 5
 # =========================
 
 # Whisper model size
-WHISPER_MODEL = "small"
+WHISPER_MODEL = "small.en"
 
 # Device ("cpu" for Raspberry Pi)
 WHISPER_DEVICE = "cpu"
@@ -171,7 +201,7 @@ WHISPER_DEVICE = "cpu"
 WHISPER_COMPUTE_TYPE = "int8"
 
 # Beam search size (higher = more accurate, slower)
-WHISPER_BEAM_SIZE = 1
+WHISPER_BEAM_SIZE = 5
 
 # Language
 WHISPER_LANGUAGE = "en"
@@ -353,6 +383,12 @@ WAKE_ONLY_PHRASES = (
     "ezrah",
 )
 
+# Short acknowledgements used when Ezra hears a wake word without a command.
+WAKE_ONLY_RESPONSES = (
+    "I'm listening.",
+    "Yes?",
+)
+
 
 # =========================
 # DEBUG AUDIO
@@ -389,7 +425,9 @@ PREBUFFER_SECONDS = 1.10
 
 CONTINUOUS_CAPTURE_AFTER_WAKE = True
 
-WAKE_COMMAND_TIMEOUT = 5.0
+# Keep the first post-wake pause short; wake-only interactions acknowledge and
+# then open a separate five-second follow-up listening turn.
+WAKE_COMMAND_TIMEOUT = 1.5
 WAKE_MAX_COMMAND_TIME = 10.0
 WAKE_ACTIVE_RMS_THRESHOLD = 0.0055
 WAKE_END_SILENCE = 0.95

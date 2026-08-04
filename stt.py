@@ -7,7 +7,16 @@ import numpy as np
 import scipy.io.wavfile as wav
 from faster_whisper import WhisperModel
 
-from config import DEBUG_AUDIO_SAMPLE_RATE, DEBUG_WAV_FILE, VERBOSE_RUNTIME_LOGS
+from config import (
+    DEBUG_AUDIO_SAMPLE_RATE,
+    DEBUG_WAV_FILE,
+    VERBOSE_RUNTIME_LOGS,
+    WHISPER_BEAM_SIZE,
+    WHISPER_COMPUTE_TYPE,
+    WHISPER_DEVICE,
+    WHISPER_LANGUAGE,
+    WHISPER_MODEL,
+)
 
 
 def _debug(message):
@@ -61,13 +70,12 @@ def suppress_stderr():
 print("🧠 Loading Whisper model...")
 
 with suppress_stderr():
-    # base.en: Fast (~80M params), good accuracy for commands.
-    # Runs ~2-3 sec on CPU. Alternative: small.en (~244M) for better
-    # accuracy but 5-7 sec latency; use compare_stt.py to benchmark.
+    # Keep model selection in config so accuracy/latency tuning actually
+    # reaches the runtime transcription path.
     model = WhisperModel(
-        "base.en",
-        device="cpu",
-        compute_type="int8",
+        WHISPER_MODEL,
+        device=WHISPER_DEVICE,
+        compute_type=WHISPER_COMPUTE_TYPE,
     )
 
 print("✅ Model loaded")
@@ -180,14 +188,16 @@ def transcribe(audio):
             # base.en with greedy decoding + VAD filter = ~2 sec latency.
             segments, _ = model.transcribe(
                 audio_16k,
-                language="en",
+                language=WHISPER_LANGUAGE,
                 # Bias decoding toward a short voice command following the
                 # wake phrase, which helps reduce "here's what" style
                 # hallucinations from wake-word audio.
-                initial_prompt="A short spoken home assistant command after the wake word Ezra.",
-                # Greedy decoding (beam_size=1) is much faster than beam_size=5
-                # and is sufficient for short voice commands.
-                beam_size=1,
+                initial_prompt=(
+                    "Ezra voice assistant commands may include: Why is the sky "
+                    "blue? Explain why the sky is blue. What time is it? Tell me "
+                    "a joke."
+                ),
+                beam_size=WHISPER_BEAM_SIZE,
                 # Prevent prior context bleeding into new commands.
                 condition_on_previous_text=False,
                 # VAD: Remove extended silence, speeds up decoding.

@@ -1,6 +1,8 @@
 import contextlib
 from collections import deque
+import hashlib
 import os
+from pathlib import Path
 import re
 import subprocess
 import threading
@@ -34,6 +36,7 @@ def suppress_stderr():
 
 _stop_model = None
 _stop_mic = None
+_speech_cache = {}
 
 if ENABLE_MID_RESPONSE_STOP:
     try:
@@ -196,6 +199,12 @@ def _monitor_stop_phrase(stop_event, ready_event=None):
                 if rolling_filled < min_samples:
                     continue
 
+                raw_window = rolling[-rolling_filled:]
+                input_rms = float(np.sqrt(np.mean(raw_window**2)))
+                if input_rms < MID_RESPONSE_STOP_MIN_INPUT_RMS:
+                    stop_hits.clear()
+                    continue
+
                 # Keep model input length fixed to match wake-word runtime expectations.
                 prepared_audio = _prepare_stop_audio(rolling)
                 audio_int16 = np.clip(
@@ -307,7 +316,35 @@ def generate_speech_file(text, output_file="temp.wav"):
     return result.returncode == 0 and os.path.exists(output_file)
 
 
-def _play_speech_file(stop_event, mouth_envelope, mouth_frame_seconds):
+def prepare_speech_cache(texts):
+    """Pre-generate short, frequently used responses for immediate playback."""
+    cache_dir = Path(__file__).parent / ".cache" / "speech"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    for text in texts:
+        key = str(text)
+        identity = f"{TTS_MODEL_PATH}|{TTS_LENGTH_SCALE}|{key}"
+        digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+        path = cache_dir / f"{digest}.wav"
+        if path.exists() or generate_speech_file(key, path):
+            _speech_cache[key] = path
+
+
+def speak_cached(text, allow_mid_response_stop=False):
+    """Speak from the prepared cache, falling back to normal generation."""
+    return speak(
+        text,
+        allow_mid_response_stop=allow_mid_response_stop,
+        audio_file=_speech_cache.get(str(text)),
+    )
+
+
+def _play_speech_file(
+    stop_event,
+    mouth_envelope,
+    mouth_frame_seconds,
+    audio_file="temp.wav",
+):
     device_candidates = [SPEAKER_DEVICE, "default", None]
     deduped_candidates = []
 
@@ -316,11 +353,11 @@ def _play_speech_file(stop_event, mouth_envelope, mouth_frame_seconds):
             deduped_candidates.append(candidate)
 
     for device in deduped_candidates:
-        cmd = ["aplay", "temp.wav"]
+        cmd = ["aplay", os.fspath(audio_file)]
         device_label = "system-default"
 
         if device is not None:
-            cmd = ["aplay", "-D", device, "temp.wav"]
+            cmd = ["aplay", "-D", device, os.fspath(audio_file)]
             device_label = str(device)
 
         set_talk_level(0.0)
@@ -378,7 +415,7 @@ def _play_speech_file(stop_event, mouth_envelope, mouth_frame_seconds):
     return False
 
 
-def speak(text, allow_mid_response_stop=True):
+def speak(text, allow_mid_response_stop=True, audio_file=None):
     if state.shutting_down:
         return
 
@@ -407,16 +444,22 @@ def speak(text, allow_mid_response_stop=True):
         _flush_stop_model()
 
     try:
-        for chunk in _split_tts_text(text):
+        chunks = _split_tts_text(text)
+        for chunk in chunks:
             if stop_event.is_set():
                 interrupted_by_stop = True
                 break
 
-            if not generate_speech_file(chunk):
-                break
+            chunk_audio_file = audio_file if len(chunks) == 1 else None
+            if chunk_audio_file is None:
+                if not generate_speech_file(chunk):
+                    break
+                chunk_audio_file = "temp.wav"
 
             try:
-                mouth_envelope, mouth_frame_seconds = build_mouth_envelope("temp.wav")
+                mouth_envelope, mouth_frame_seconds = build_mouth_envelope(
+                    os.fspath(chunk_audio_file)
+                )
             except Exception as e:
                 print(f"⚠️ TTS mouth sync disabled for this chunk: {e}")
                 mouth_envelope = np.ones(1, dtype=np.float32) * 0.5
@@ -430,6 +473,7 @@ def speak(text, allow_mid_response_stop=True):
                 stop_event,
                 mouth_envelope,
                 mouth_frame_seconds,
+                chunk_audio_file,
             ):
                 interrupted_by_stop = True
                 break

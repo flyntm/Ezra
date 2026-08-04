@@ -1,14 +1,29 @@
 import state
-from config import EMOTION_STANDBY, VERBOSE_RUNTIME_LOGS
+from config import (
+    EMOTION_STANDBY,
+    ENABLE_FACE_MOTION_DIAGNOSTIC,
+    VERBOSE_RUNTIME_LOGS,
+)
 from robot import robot_emotions
 
 print("🤖 Starting robot emotions...")
 
-robot_emotions.start(EMOTION_STANDBY)
+if ENABLE_FACE_MOTION_DIAGNOSTIC:
+    print("🧪 Diagnostic face lock enabled: eye and eyelid animation disabled")
+    robot_emotions.start("wake")
+    # The normal wake expression intentionally lights one mouth pixel. Stop
+    # the animation controller after applying the stationary pose so the
+    # diagnostic remains mechanically quiet with every mouth LED off.
+    robot_emotions.stop(clear_mouth=True, relax_servos=False)
+else:
+    robot_emotions.start(EMOTION_STANDBY)
 
 
 def set_emotion(emotion):
     if state.shutting_down:
+        return
+
+    if ENABLE_FACE_MOTION_DIAGNOSTIC:
         return
 
     if VERBOSE_RUNTIME_LOGS:
@@ -23,6 +38,9 @@ def set_emotion(emotion):
 
 def set_temporary_emotion(emotion, seconds, fallback_emotion=EMOTION_STANDBY):
     if state.shutting_down:
+        return
+
+    if ENABLE_FACE_MOTION_DIAGNOSTIC:
         return
 
     if VERBOSE_RUNTIME_LOGS:

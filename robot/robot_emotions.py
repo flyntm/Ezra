@@ -7,6 +7,7 @@ import threading
 import time
 
 from config import (
+    DOA_EYE_MOTION_SUPPRESSION_SECONDS,
     EYELID_BLINK_STEPS,
     EYELID_BLINK_TRAVEL_SECONDS,
     MOUTH_LED_DEFAULT_HUE,
@@ -19,6 +20,7 @@ from config import (
     MOUTH_LED_TALK_FRAME_DELAY,
     MOUTH_LED_THINK_FULL_PAUSE,
     MOUTH_LED_THINK_STEP_DELAY,
+    SOUND_GAZE_BLINK_SUPPRESSION_SECONDS,
 )
 from robot import animation
 from robot import eyelids
@@ -60,7 +62,7 @@ LISTENING_FIXATION_SECONDS = (
 )
 LISTENING_SACCADE_SECONDS = (0.08, 0.14)
 STANDBY_GAZE_CENTER = (90.0, 86.0)
-STANDBY_MOTION_SCALE = 1.30
+STANDBY_MOTION_SCALE = 1.60
 STANDBY_FIXATION_SECONDS = (
     2.5 / STANDBY_MOTION_SCALE,
     6.0 / STANDBY_MOTION_SCALE,
@@ -107,6 +109,7 @@ class RobotEmotionController:
         self._next_standby_gaze_at = 0.0
         self._next_listening_gaze_at = 0.0
         self._external_gaze = None
+        self._sound_gaze_suppressed_until = 0.0
 
     @property
     def emotion(self):
@@ -248,6 +251,24 @@ class RobotEmotionController:
             self._external_gaze = None
             eyes.clear_gaze_override()
 
+    def is_sound_gaze_suppressed(self):
+        """Backward-compatible alias for the shared DoA motion-noise guard."""
+        return self.is_doa_suppressed()
+
+    def is_doa_suppressed(self):
+        """Return whether recent eye or eyelid servo motion may still be audible."""
+        return time.monotonic() < self._sound_gaze_suppressed_until
+
+    def _suppress_doa_for_motion(self, motion_seconds=0.0):
+        suppressed_until = time.monotonic() + max(
+            0.0,
+            float(motion_seconds) + DOA_EYE_MOTION_SUPPRESSION_SECONDS,
+        )
+        self._sound_gaze_suppressed_until = max(
+            self._sound_gaze_suppressed_until,
+            suppressed_until,
+        )
+
     def speak(self):
         return self.set_emotion("normal_talking")
 
@@ -319,6 +340,7 @@ class RobotEmotionController:
             time.sleep(self.tick_seconds)
 
     def _apply_entry_pose_locked(self, emotion):
+        self._suppress_doa_for_motion(0.25)
         if emotion == "standby":
             self._set_lids(1.0)
             eyes.gaze_smooth(90, 86, steps=12, duration=0.12)
@@ -362,11 +384,13 @@ class RobotEmotionController:
     def _tick_standby(self, now, t):
         if now >= self._next_standby_gaze_at:
             h, v = self._choose_standby_gaze()
+            gaze_duration = random.uniform(*STANDBY_SACCADE_SECONDS)
+            self._suppress_doa_for_motion(gaze_duration)
             eyes.gaze_smooth(
                 h,
                 v,
                 steps=8,
-                duration=random.uniform(*STANDBY_SACCADE_SECONDS),
+                duration=gaze_duration,
             )
             self._next_standby_gaze_at = time.time() + random.uniform(
                 *STANDBY_FIXATION_SECONDS
@@ -381,10 +405,10 @@ class RobotEmotionController:
         center_h, center_v = STANDBY_GAZE_CENTER
         choice = random.random()
 
-        if choice < 0.25:
+        if choice < 0.15:
             return center_h, center_v
 
-        if choice < 0.40:
+        if choice < 0.45:
             side = random.choice((-1.0, 1.0))
             return center_h + side * random.uniform(
                 5.0 * STANDBY_MOTION_SCALE,
@@ -394,15 +418,15 @@ class RobotEmotionController:
                 2.0 * STANDBY_MOTION_SCALE,
             )
 
-        h_limit = 4.0 * STANDBY_MOTION_SCALE
-        v_limit = 2.0 * STANDBY_MOTION_SCALE
+        h_limit = 6.0 * STANDBY_MOTION_SCALE
+        v_limit = 3.0 * STANDBY_MOTION_SCALE
         h_offset = max(
             -h_limit,
-            min(h_limit, random.gauss(0.0, 1.8 * STANDBY_MOTION_SCALE)),
+            min(h_limit, random.gauss(0.0, 3.0 * STANDBY_MOTION_SCALE)),
         )
         v_offset = max(
             -v_limit,
-            min(v_limit, random.gauss(0.0, 0.9 * STANDBY_MOTION_SCALE)),
+            min(v_limit, random.gauss(0.0, 1.5 * STANDBY_MOTION_SCALE)),
         )
         return center_h + h_offset, center_v + v_offset
 
@@ -417,19 +441,8 @@ class RobotEmotionController:
             self._mouth_talk_level(self._external_talk_level)
 
     def _tick_listening(self, now, t):
-        if now >= self._next_listening_gaze_at:
-            h, v = self._choose_listening_gaze()
-            eyes.gaze_smooth(
-                h,
-                v,
-                steps=6,
-                duration=random.uniform(*LISTENING_SACCADE_SECONDS),
-            )
-            self._next_listening_gaze_at = time.time() + random.uniform(
-                *LISTENING_FIXATION_SECONDS
-            )
-
-        self._maybe_blink(now)
+        # Hold the attentive pose mechanically still while command audio and
+        # direction are being measured. Animation resumes in thinking/standby.
         self._mouth_listening()
 
     @staticmethod
@@ -534,6 +547,15 @@ class RobotEmotionController:
         if now - self._last_blink_at < self._next_blink_after:
             return
 
+        blink_motion_seconds = (
+            (2.0 * EYELID_BLINK_TRAVEL_SECONDS) + closed_seconds
+        )
+        self._sound_gaze_suppressed_until = max(
+            self._sound_gaze_suppressed_until,
+            time.monotonic()
+            + blink_motion_seconds
+            + SOUND_GAZE_BLINK_SUPPRESSION_SECONDS,
+        )
         open_amount = self._lid_open_amount
         self._move_lids_smooth(open_amount, 0.0)
         time.sleep(closed_seconds)
@@ -823,6 +845,14 @@ def set_external_gaze(horizontal, vertical=86.0):
 
 def clear_external_gaze():
     return _default_controller.clear_external_gaze()
+
+
+def is_sound_gaze_suppressed():
+    return _default_controller.is_sound_gaze_suppressed()
+
+
+def is_doa_suppressed():
+    return _default_controller.is_doa_suppressed()
 
 
 def set_temporary_emotion(emotion, seconds, fallback_emotion="standby"):
