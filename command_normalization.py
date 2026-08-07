@@ -28,6 +28,18 @@ FOLLOW_UP_CANCEL_PHRASES = {
     "um",
 }
 
+# Single words that are meaningful on their own. Other one-word transcripts
+# are commonly coughs, filler, or wake-word handoff noise such as "pfft".
+ACTIONABLE_SINGLE_WORD_COMMANDS = {
+    "exit",
+    "goodbye",
+    "poweroff",
+    "quit",
+    "shutdown",
+    "stop",
+    "time",
+}
+
 
 def strip_wake_word(text):
     """Remove wake-word prefixes from recognized text."""
@@ -76,3 +88,13 @@ def is_follow_up_cancel(command):
         str.maketrans("", "", string.punctuation)
     )
     return " ".join(normalized.split()) in FOLLOW_UP_CANCEL_PHRASES
+
+
+def is_unclear_single_word(command):
+    """Return whether a lone transcript is unlikely to be a real command."""
+
+    normalized = command.lower().translate(
+        str.maketrans("", "", string.punctuation)
+    )
+    words = normalized.split()
+    return len(words) == 1 and words[0] not in ACTIONABLE_SINGLE_WORD_COMMANDS

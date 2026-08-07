@@ -11,6 +11,7 @@ from audio_debug import playback_diagnostic, save_debug_wav
 from command import handle_local_command
 from command_normalization import (
     is_follow_up_cancel,
+    is_unclear_single_word,
     is_wake_word_only,
     strip_wake_word,
 )
@@ -351,16 +352,14 @@ def main():
                 # Save wake audio as debug WAV so playback diagnostic works.
                 maybe_playback_diagnostic(wake_audio)
 
-            # Ignore empty or unclear commands.
-            if len(command) < 2:
+            # Ignore empty or unclear commands. In particular, do not send a
+            # lone noise transcript from a false wake to the GPT conversation.
+            if len(command) < 2 or is_unclear_single_word(command):
                 print("⚠️ Ignoring short or unclear input")
-                command = acknowledge_wake_word(comment_cancel, comment_thread)
-                comment_cancel = None
-                comment_thread = None
-                if command is None:
-                    continue
-                command_was_transcribed = True
-                thinking_started_at = time.monotonic()
+                stop_thinking_comment(comment_cancel, comment_thread)
+                set_emotion(EMOTION_STANDBY)
+                reset_idle_timer()
+                continue
 
             print(f"📝 Command: {command}")
 

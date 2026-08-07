@@ -8,6 +8,7 @@ import state
 
 from config import GOODBYE_TEXT
 from live_info import get_live_info_response
+from presentations import is_introduction_request, present_introduction
 from tts import speak
 from wake_word import reset_idle_timer
 
@@ -184,6 +185,44 @@ def handle_local_command(command):
             print(f"⚠️ Volume command failed: {e}")
             speak("I couldn't change the volume.")
 
+        reset_idle_timer()
+        return True
+
+    if is_introduction_request(command):
+        # Keep presentation-only hardware hooks lazy so normal startup and
+        # every existing command retain their previous behavior.
+        from ezra_emotion import set_temporary_emotion
+        from robot.head_tracking import head_tracker
+
+        # Treat these bearings as different people spread across the audience.
+        # The presenter shuffles them and varies how long Ezra holds each gaze.
+        audience_bearings = (
+            -48.0,
+            -35.0,
+            -22.0,
+            -10.0,
+            0.0,
+            12.0,
+            25.0,
+            38.0,
+            50.0,
+        )
+        look_targets = [
+            lambda target=target: head_tracker.turn_toward_bearing(
+                target - head_tracker.current_yaw,
+                source="presentation",
+                step_delay_seconds=0.05,
+                announce=False,
+            )
+            for target in audience_bearings
+        ]
+
+        present_introduction(
+            speak,
+            smile=lambda seconds: set_temporary_emotion("happy", seconds),
+            look_targets=look_targets,
+        )
+        head_tracker.center()
         reset_idle_timer()
         return True
 

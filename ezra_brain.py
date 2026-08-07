@@ -70,7 +70,8 @@ def ask_ezra(user_text):
     # Extract text safely
     text = getattr(response, "output_text", "").strip()
 
-    print(f"🧠 Raw GPT: {text}")
+    if VERBOSE_RUNTIME_LOGS:
+        print(f"🧠 Raw GPT: {text}")
 
     # Parse JSON safely
     try:

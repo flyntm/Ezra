@@ -16,6 +16,7 @@ from config import (
     HEAD_TRACKING_STEP_DELAY_SECONDS,
     HEAD_TRACKING_STEP_DEGREES,
     LISTEN_ACTIVE_RMS_THRESHOLD,
+    VERBOSE_RUNTIME_LOGS,
 )
 from robot import calibration, servos
 from robot.constants import CH_HEAD_TURN
@@ -118,7 +119,8 @@ class HeadTracker:
     def turn_toward_wake(self, raw_angles):
         """Turn using only DoA samples retained from the confirmed wake word."""
         if not raw_angles:
-            print("👂 No wake-word direction samples; head stays put")
+            if VERBOSE_RUNTIME_LOGS:
+                print("👂 No wake-word direction samples; head stays put")
             return False
 
         average_samples = max(
@@ -132,16 +134,35 @@ class HeadTracker:
         correction = _circular_mean_degrees(bearings)
         return self._turn_by_correction(correction, source="wake word")
 
-    def turn_toward_bearing(self, bearing, source="command"):
+    def turn_toward_bearing(
+        self,
+        bearing,
+        source="command",
+        step_delay_seconds=None,
+        announce=True,
+    ):
         """Apply an already normalized bearing as a relative correction."""
-        return self._turn_by_correction(float(bearing), source=source)
+        return self._turn_by_correction(
+            float(bearing),
+            source=source,
+            step_delay_seconds=step_delay_seconds,
+            announce=announce,
+        )
 
-    def _turn_by_correction(self, correction, source):
+    def _turn_by_correction(
+        self,
+        correction,
+        source,
+        step_delay_seconds=None,
+        announce=True,
+    ):
+        announce = announce and VERBOSE_RUNTIME_LOGS
         if abs(correction) <= HEAD_TRACKING_CENTER_DEADBAND_DEGREES:
-            print(
-                f"👂 {source.capitalize()} direction {correction:+.1f}° is centered; "
-                "head stays put"
-            )
+            if announce:
+                print(
+                    f"👂 {source.capitalize()} direction {correction:+.1f}° "
+                    "is centered; head stays put"
+                )
             return False
 
         requested_yaw = self._current_yaw + correction
@@ -151,21 +172,26 @@ class HeadTracker:
             HEAD_TRACKING_MAX_YAW_DEGREES,
         )
 
-        if target_yaw != requested_yaw:
+        if announce and target_yaw != requested_yaw:
             print(
                 f"👂 Clamping unreachable {source} target "
                 f"{requested_yaw:+.1f}° to {target_yaw:+.1f}°"
             )
 
         if abs(target_yaw - self._current_yaw) < 0.01:
-            print(f"👂 Head already at {target_yaw:+.1f}° limit")
+            if announce:
+                print(f"👂 Head already at {target_yaw:+.1f}° limit")
             return False
 
-        print(
-            f"👂 Turning toward {source}: {self._current_yaw:+.1f}° "
-            f"→ {target_yaw:+.1f}°"
+        if announce:
+            print(
+                f"👂 Turning toward {source}: {self._current_yaw:+.1f}° "
+                f"→ {target_yaw:+.1f}°"
+            )
+        self._move_smooth(
+            target_yaw,
+            step_delay_seconds=step_delay_seconds,
         )
-        self._move_smooth(target_yaw)
         return True
 
     def center(self):
@@ -193,7 +219,7 @@ class HeadTracker:
 
         return center + ((endpoint - center) * fraction)
 
-    def _move_smooth(self, target_yaw):
+    def _move_smooth(self, target_yaw, step_delay_seconds=None):
         target_yaw = _clamp(
             target_yaw,
             -HEAD_TRACKING_MAX_YAW_DEGREES,
@@ -201,11 +227,16 @@ class HeadTracker:
         )
         distance = target_yaw - self._current_yaw
         steps = max(1, math.ceil(abs(distance) / HEAD_TRACKING_STEP_DEGREES))
+        step_delay = (
+            HEAD_TRACKING_STEP_DELAY_SECONDS
+            if step_delay_seconds is None
+            else max(0.0, float(step_delay_seconds))
+        )
 
         for step in range(1, steps + 1):
             yaw = self._current_yaw + distance * (step / steps)
             servos.set_servo_angle(CH_HEAD_TURN, self._yaw_to_servo(yaw))
-            time.sleep(HEAD_TRACKING_STEP_DELAY_SECONDS)
+            time.sleep(step_delay)
 
         self._current_yaw = target_yaw
 

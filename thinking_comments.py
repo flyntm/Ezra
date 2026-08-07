@@ -14,6 +14,7 @@ from config import (
     THINKING_COMMENTS,
     TTS_LENGTH_SCALE,
     TTS_MODEL_PATH,
+    TTS_SENTENCE_SILENCE,
 )
 from ezra_emotion import set_talk_level
 from mouth_sync import build_mouth_envelope
@@ -25,7 +26,10 @@ _cached_comments = []
 
 
 def _cache_path(text):
-    identity = f"{TTS_MODEL_PATH}|{TTS_LENGTH_SCALE}|{text}"
+    identity = (
+        f"{TTS_MODEL_PATH}|{TTS_LENGTH_SCALE}|"
+        f"{TTS_SENTENCE_SILENCE}|{text}"
+    )
     digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
     return _CACHE_DIR / f"{digest}.wav"
 

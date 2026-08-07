@@ -123,13 +123,13 @@ RMS_CLAMP = 0.6
 MID_RESPONSE_STOP_MODEL_PATH = "/home/flyntm/projects/ezra/ezra_stop.onnx"
 
 # Mid-response stop sensitivity while Ezra is speaking.
-# Lower threshold/fewer hits than wake-loop stop guard to compensate for
-# speaker echo and overlap during playback.
-MID_RESPONSE_STOP_GUARD_THRESHOLD = 0.35
-MID_RESPONSE_STOP_GUARD_HITS = 2
+# Require sustained confidence so Ezra's own amplified voice is less likely to
+# be mistaken for a stop request.
+MID_RESPONSE_STOP_GUARD_THRESHOLD = 0.45
+MID_RESPONSE_STOP_GUARD_HITS = 3
 
 # Lower stop threshold while ReSpeaker hardware VAD sees active speech.
-MID_RESPONSE_STOP_VAD_ASSIST_THRESHOLD = 0.25
+MID_RESPONSE_STOP_VAD_ASSIST_THRESHOLD = 0.40
 
 # Do not normalize and classify near-silence. Servo and room noise can otherwise
 # be amplified into a convincing stop-model input while Ezra is speaking.
@@ -201,7 +201,7 @@ WHISPER_DEVICE = "cpu"
 WHISPER_COMPUTE_TYPE = "int8"
 
 # Beam search size (higher = more accurate, slower)
-WHISPER_BEAM_SIZE = 5
+WHISPER_BEAM_SIZE = 2
 
 # Language
 WHISPER_LANGUAGE = "en"
@@ -218,7 +218,10 @@ PIPER_PATH = "~/projects/piper_tts/piper"
 TTS_MODEL_PATH = "/home/flyntm/projects/ezra/voices/en_US-bryce-medium.onnx"
 
 #  Talking Speed - Piper phoneme duration. Lower is faster; 1.0 is the voice model's default.
-TTS_LENGTH_SCALE = 0.7
+TTS_LENGTH_SCALE = 0.8
+
+# Silence Piper adds after sentence-ending punctuation.
+TTS_SENTENCE_SILENCE = 0.08
 
 # Optional personality comments played while a non-local AI request is pending.
 # Audio is generated once and cached. Pending comments are canceled when work
@@ -236,6 +239,7 @@ THINKING_COMMENTS = (
 # response text remains unchanged in logs and conversation history.
 TTS_PRONUNCIATION_OVERRIDES = {
     "Plano": "Play-no",
+    "goofy": "goo-fee",
 }
 
 # Delay before playback (seconds)

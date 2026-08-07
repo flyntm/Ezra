@@ -297,6 +297,8 @@ def generate_speech_file(text, output_file="temp.wav"):
         os.path.expanduser(TTS_MODEL_PATH),
         "--length_scale",
         str(TTS_LENGTH_SCALE),
+        "--sentence_silence",
+        str(TTS_SENTENCE_SILENCE),
         "--output_file",
         os.fspath(output_file),
     ]
@@ -323,7 +325,10 @@ def prepare_speech_cache(texts):
 
     for text in texts:
         key = str(text)
-        identity = f"{TTS_MODEL_PATH}|{TTS_LENGTH_SCALE}|{key}"
+        identity = (
+            f"{TTS_MODEL_PATH}|{TTS_LENGTH_SCALE}|"
+            f"{TTS_SENTENCE_SILENCE}|{key}"
+        )
         digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
         path = cache_dir / f"{digest}.wav"
         if path.exists() or generate_speech_file(key, path):
@@ -415,9 +420,14 @@ def _play_speech_file(
     return False
 
 
-def speak(text, allow_mid_response_stop=True, audio_file=None):
+def speak(
+    text,
+    allow_mid_response_stop=True,
+    audio_file=None,
+    on_playback_start=None,
+):
     if state.shutting_down:
-        return
+        return False
 
     print(f"Ezra: {text}")
 
@@ -445,6 +455,7 @@ def speak(text, allow_mid_response_stop=True, audio_file=None):
 
     try:
         chunks = _split_tts_text(text)
+        playback_started = False
         for chunk in chunks:
             if stop_event.is_set():
                 interrupted_by_stop = True
@@ -469,6 +480,13 @@ def speak(text, allow_mid_response_stop=True, audio_file=None):
                 time.sleep(TTS_START_DELAY)
             set_emotion(EMOTION_TALKING)
 
+            if not playback_started and on_playback_start is not None:
+                try:
+                    on_playback_start()
+                except Exception as e:
+                    print(f"⚠️ TTS playback-start callback failed: {e}")
+                playback_started = True
+
             if stop_event.is_set() or _play_speech_file(
                 stop_event,
                 mouth_envelope,
@@ -490,3 +508,5 @@ def speak(text, allow_mid_response_stop=True, audio_file=None):
     if interrupted_by_stop and not state.shutting_down:
         # Confirmation without recursive stop-monitoring.
         speak("Stopped.", allow_mid_response_stop=False)
+
+    return interrupted_by_stop
