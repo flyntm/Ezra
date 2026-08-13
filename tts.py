@@ -146,6 +146,46 @@ def _read_respeaker_speech():
     return False
 
 
+def _open_stop_microphone(audio_callback):
+    """Open the stop listener with the same retry/fallback policy as wake."""
+
+    candidates = [WAKE_MIC_DEVICE, MIC_DEVICE, "default", None]
+    candidates = list(dict.fromkeys(candidates))
+    last_error = None
+
+    for device in candidates:
+        for attempt in range(1, WAKE_MIC_OPEN_RETRIES + 1):
+            try:
+                stream = sd.InputStream(
+                    device=device,
+                    samplerate=WAKE_SAMPLE_RATE,
+                    channels=1,
+                    dtype="float32",
+                    blocksize=WAKE_BLOCK_SIZE,
+                    callback=audio_callback,
+                )
+                stream.start()
+                return stream
+            except sd.PortAudioError as e:
+                last_error = e
+                error_text = str(e).lower()
+
+                # Retrying cannot make an absent/incompatible device usable;
+                # move directly to the next fallback in those cases.
+                if (
+                    "no input device matching" in error_text
+                    or "invalid sample rate" in error_text
+                ):
+                    break
+
+                if attempt < WAKE_MIC_OPEN_RETRIES:
+                    time.sleep(WAKE_MIC_RETRY_DELAY)
+
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("No microphone candidates are configured")
+
+
 def _monitor_stop_phrase(stop_event, ready_event=None):
     """Listen for ezra_stop while TTS audio is playing."""
 
@@ -158,21 +198,14 @@ def _monitor_stop_phrase(stop_event, ready_event=None):
 
     audio_queue = deque()
     stop_hits = deque(maxlen=MID_RESPONSE_STOP_GUARD_HITS)
-    rolling = np.zeros(WAKE_SAMPLE_RATE, dtype=np.float32)
-    rolling_filled = 0
 
     def audio_callback(indata, frames, time_info, status):
         audio_queue.append(indata[:, 0].copy())
 
+    stream = None
     try:
-        with sd.InputStream(
-            device=WAKE_MIC_DEVICE,
-            samplerate=WAKE_SAMPLE_RATE,
-            channels=1,
-            dtype="float32",
-            blocksize=WAKE_BLOCK_SIZE,
-            callback=audio_callback,
-        ):
+        stream = _open_stop_microphone(audio_callback)
+        try:
             if ready_event is not None:
                 ready_event.set()
 
@@ -182,31 +215,15 @@ def _monitor_stop_phrase(stop_event, ready_event=None):
                     continue
 
                 chunk = audio_queue.popleft()
-
-                if chunk.size >= rolling.size:
-                    rolling = chunk[-rolling.size :].astype(np.float32, copy=False)
-                    rolling_filled = rolling.size
-                else:
-                    shift = chunk.size
-                    rolling[:-shift] = rolling[shift:]
-                    rolling[-shift:] = chunk.astype(np.float32, copy=False)
-                    rolling_filled = min(rolling.size, rolling_filled + shift)
-
-                min_samples = max(
-                    1,
-                    int(WAKE_SAMPLE_RATE * MID_RESPONSE_STOP_MIN_WINDOW_SECONDS),
-                )
-                if rolling_filled < min_samples:
-                    continue
-
-                raw_window = rolling[-rolling_filled:]
-                input_rms = float(np.sqrt(np.mean(raw_window**2)))
+                input_rms = float(np.sqrt(np.mean(chunk**2)))
                 if input_rms < MID_RESPONSE_STOP_MIN_INPUT_RMS:
                     stop_hits.clear()
                     continue
 
-                # Keep model input length fixed to match wake-word runtime expectations.
-                prepared_audio = _prepare_stop_audio(rolling)
+                # OpenWakeWord is stateful: each live microphone sample must be
+                # supplied exactly once and in chronological order. Replaying an
+                # overlapping rolling window here corrupts its feature timeline.
+                prepared_audio = _prepare_stop_audio(chunk)
                 audio_int16 = np.clip(
                     prepared_audio * 32767,
                     -32768,
@@ -231,6 +248,11 @@ def _monitor_stop_phrase(stop_event, ready_event=None):
                     print("🛑 Stop phrase detected — interrupting response")
                     _flush_stop_model()
                     return
+        finally:
+            try:
+                stream.stop()
+            finally:
+                stream.close()
     except Exception as e:
         # Keep TTS running even if monitor fails, but surface diagnostics.
         if ready_event is not None:

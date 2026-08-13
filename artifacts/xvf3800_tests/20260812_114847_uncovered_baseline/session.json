@@ -1,0 +1,157 @@
+{
+  "metadata": {
+    "configuration": "uncovered_baseline",
+    "created": "2026-08-12T11:48:47.718112-05:00",
+    "distance_metres": 1.0,
+    "audio_device_index": 1,
+    "audio_device_name": "reSpeaker XVF3800 4-Mic Array: USB Audio (hw:2,0)",
+    "sample_rate": 16000,
+    "channels": 2
+  },
+  "trials": [
+    {
+      "name": "quiet",
+      "kind": "silence",
+      "angle": null,
+      "servos": false,
+      "duration": 10,
+      "instructions": "Keep the room quiet; servos stationary.",
+      "wav_file": "quiet.wav",
+      "capture_complete": true,
+      "captured_seconds": 10.0,
+      "rms_dbfs": -58.4,
+      "peak_dbfs": -45.78,
+      "clipped_samples": 0,
+      "control_samples": 139,
+      "speech_fraction": 0.0,
+      "mean_doa_degrees": null,
+      "mean_speech_energy": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "above_quiet_db": ""
+    },
+    {
+      "name": "servos",
+      "kind": "silence",
+      "angle": null,
+      "servos": true,
+      "duration": 15,
+      "instructions": "The eye, eyelid, and head servos will move automatically.",
+      "wav_file": "servos.wav",
+      "capture_complete": true,
+      "captured_seconds": 15.0,
+      "rms_dbfs": -27.28,
+      "peak_dbfs": -1.03,
+      "clipped_samples": 0,
+      "control_samples": 206,
+      "speech_fraction": 0.981,
+      "mean_doa_degrees": 83.4,
+      "mean_speech_energy": [
+        682901.15,
+        422430.89,
+        352672.39,
+        748344.17
+      ],
+      "above_quiet_db": 31.12
+    },
+    {
+      "name": "speech_0",
+      "kind": "speech",
+      "angle": 0,
+      "servos": false,
+      "duration": 12,
+      "instructions": "Phone at 0 degrees; servos stationary. Play the reference recording.",
+      "wav_file": "speech_0.wav",
+      "capture_complete": true,
+      "captured_seconds": 12.0,
+      "rms_dbfs": -29.88,
+      "peak_dbfs": -9.76,
+      "clipped_samples": 0,
+      "control_samples": 165,
+      "speech_fraction": 0.976,
+      "mean_doa_degrees": 177.6,
+      "mean_speech_energy": [
+        1590.34,
+        1627461.06,
+        1337715.51,
+        1653529.31
+      ],
+      "above_quiet_db": 28.52
+    },
+    {
+      "name": "speech_90",
+      "kind": "speech",
+      "angle": 90,
+      "servos": false,
+      "duration": 12,
+      "instructions": "Phone at 90 degrees; servos stationary. Play the reference recording.",
+      "wav_file": "speech_90.wav",
+      "capture_complete": true,
+      "captured_seconds": 12.0,
+      "rms_dbfs": -27.73,
+      "peak_dbfs": -6.55,
+      "clipped_samples": 0,
+      "control_samples": 163,
+      "speech_fraction": 0.939,
+      "mean_doa_degrees": 106.1,
+      "mean_speech_energy": [
+        1816.6,
+        2027200.2,
+        1720436.0,
+        2033707.47
+      ],
+      "above_quiet_db": 30.67
+    },
+    {
+      "name": "speech_0_servos",
+      "kind": "speech",
+      "angle": 0,
+      "servos": true,
+      "duration": 12,
+      "instructions": "Phone at 0 degrees. Play the recording while the servos move.",
+      "wav_file": "speech_0_servos.wav",
+      "capture_complete": true,
+      "captured_seconds": 12.0,
+      "rms_dbfs": -24.85,
+      "peak_dbfs": -1.86,
+      "clipped_samples": 0,
+      "control_samples": 167,
+      "speech_fraction": 0.988,
+      "mean_doa_degrees": 138.1,
+      "mean_speech_energy": [
+        814490.19,
+        644734.67,
+        793919.31,
+        1502313.63
+      ],
+      "above_quiet_db": 33.55
+    },
+    {
+      "name": "speech_90_servos",
+      "kind": "speech",
+      "angle": 90,
+      "servos": true,
+      "duration": 12,
+      "instructions": "Phone at 90 degrees. Play the recording while the servos move.",
+      "wav_file": "speech_90_servos.wav",
+      "capture_complete": true,
+      "captured_seconds": 12.0,
+      "rms_dbfs": -27.05,
+      "peak_dbfs": -2.89,
+      "clipped_samples": 0,
+      "control_samples": 165,
+      "speech_fraction": 0.982,
+      "mean_doa_degrees": 110.6,
+      "mean_speech_energy": [
+        667011.85,
+        620512.7,
+        860861.86,
+        1135724.73
+      ],
+      "above_quiet_db": 31.35
+    }
+  ]
+}

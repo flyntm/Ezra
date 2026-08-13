@@ -1,0 +1,2 @@
+name,kind,angle,servos,duration,wav_file,capture_complete,captured_seconds,rms_dbfs,peak_dbfs,above_quiet_db,clipped_samples,speech_fraction,mean_doa_degrees,mean_speech_energy
+servos,silence,,True,15,servos.wav,True,15.0,-25.63,-2.21,,0,0.986,86.8,"[443948.31, 411384.93, 413009.55, 810174.69]"

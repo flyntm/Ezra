@@ -384,6 +384,14 @@ def reset_idle_timer():
 def enter_sleep():
     print("\n😴 Ezra sleeping")
 
+    if head_tracker is not None:
+        try:
+            head_tracker.center()
+        except Exception as e:
+            # A neck-servo problem should not prevent the eyes, eyelids, and
+            # facial animation from completing the sleep transition.
+            print(f"Sleep head-centering error: {e}")
+
     try:
         robot_emotions.clear_external_gaze()
         eyes.center()

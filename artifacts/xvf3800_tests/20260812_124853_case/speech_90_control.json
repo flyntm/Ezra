@@ -1,0 +1,1806 @@
+[
+  {
+    "seconds": 0.0,
+    "doa_degrees": 161.0,
+    "speech": true,
+    "speech_energy": [
+      2795170.25,
+      0.0,
+      2979194.25,
+      2979194.25
+    ]
+  },
+  {
+    "seconds": 0.063,
+    "doa_degrees": 161.0,
+    "speech": true,
+    "speech_energy": [
+      1227908.25,
+      0.0,
+      1050967.375,
+      1227908.25
+    ]
+  },
+  {
+    "seconds": 0.135,
+    "doa_degrees": 161.0,
+    "speech": true,
+    "speech_energy": [
+      642025.8125,
+      0.0,
+      513983.4375,
+      642025.8125
+    ]
+  },
+  {
+    "seconds": 0.217,
+    "doa_degrees": 161.0,
+    "speech": true,
+    "speech_energy": [
+      332641.09375,
+      0.0,
+      233720.0,
+      332641.09375
+    ]
+  },
+  {
+    "seconds": 0.288,
+    "doa_degrees": 142.0,
+    "speech": true,
+    "speech_energy": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "seconds": 0.371,
+    "doa_degrees": 119.0,
+    "speech": true,
+    "speech_energy": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "seconds": 0.453,
+    "doa_degrees": 108.0,
+    "speech": true,
+    "speech_energy": [
+      339673.0,
+      0.0,
+      536480.3125,
+      339673.0
+    ]
+  },
+  {
+    "seconds": 0.535,
+    "doa_degrees": 103.0,
+    "speech": true,
+    "speech_energy": [
+      1452772.875,
+      0.0,
+      1666983.0,
+      1452772.875
+    ]
+  },
+  {
+    "seconds": 0.607,
+    "doa_degrees": 101.0,
+    "speech": true,
+    "speech_energy": [
+      3583954.75,
+      0.0,
+      3998683.25,
+      3583954.75
+    ]
+  },
+  {
+    "seconds": 0.678,
+    "doa_degrees": 101.0,
+    "speech": true,
+    "speech_energy": [
+      3967241.5,
+      0.0,
+      5202331.5,
+      3967241.5
+    ]
+  },
+  {
+    "seconds": 0.761,
+    "doa_degrees": 101.0,
+    "speech": true,
+    "speech_energy": [
+      4699049.0,
+      0.0,
+      6506004.0,
+      4699049.0
+    ]
+  },
+  {
+    "seconds": 0.832,
+    "doa_degrees": 101.0,
+    "speech": true,
+    "speech_energy": [
+      2470926.75,
+      0.0,
+      2910816.5,
+      2470926.75
+    ]
+  },
+  {
+    "seconds": 0.904,
+    "doa_degrees": 101.0,
+    "speech": true,
+    "speech_energy": [
+      1725664.875,
+      0.0,
+      1897784.625,
+      1725664.875
+    ]
+  },
+  {
+    "seconds": 0.976,
+    "doa_degrees": 102.0,
+    "speech": true,
+    "speech_energy": [
+      1446243.0,
+      0.0,
+      1475595.875,
+      1446243.0
+    ]
+  },
+  {
+    "seconds": 1.048,
+    "doa_degrees": 102.0,
+    "speech": true,
+    "speech_energy": [
+      474484.59375,
+      0.0,
+      373012.25,
+      474484.59375
+    ]
+  },
+  {
+    "seconds": 1.119,
+    "doa_degrees": 102.0,
+    "speech": true,
+    "speech_energy": [
+      1331618.125,
+      0.0,
+      1352789.875,
+      1331618.125
+    ]
+  },
+  {
+    "seconds": 1.191,
+    "doa_degrees": 102.0,
+    "speech": true,
+    "speech_energy": [
+      1959397.0,
+      0.0,
+      2169016.0,
+      1959397.0
+    ]
+  },
+  {
+    "seconds": 1.263,
+    "doa_degrees": 102.0,
+    "speech": true,
+    "speech_energy": [
+      1300514.25,
+      0.0,
+      1195005.0,
+      1300514.25
+    ]
+  },
+  {
+    "seconds": 1.335,
+    "doa_degrees": 102.0,
+    "speech": true,
+    "speech_energy": [
+      1466938.125,
+      0.0,
+      1338536.25,
+      1466938.125
+    ]
+  },
+  {
+    "seconds": 1.406,
+    "doa_degrees": 102.0,
+    "speech": true,
+    "speech_energy": [
+      1441519.125,
+      0.0,
+      1214498.5,
+      1441519.125
+    ]
+  },
+  {
+    "seconds": 1.478,
+    "doa_degrees": 102.0,
+    "speech": true,
+    "speech_energy": [
+      3685289.5,
+      0.0,
+      4878608.5,
+      3685289.5
+    ]
+  },
+  {
+    "seconds": 1.56,
+    "doa_degrees": 102.0,
+    "speech": true,
+    "speech_energy": [
+      1040993.125,
+      0.0,
+      1276607.5,
+      1040993.125
+    ]
+  },
+  {
+    "seconds": 1.632,
+    "doa_degrees": 103.0,
+    "speech": true,
+    "speech_energy": [
+      2287106.75,
+      0.0,
+      2146628.5,
+      2287106.75
+    ]
+  },
+  {
+    "seconds": 1.704,
+    "doa_degrees": 103.0,
+    "speech": true,
+    "speech_energy": [
+      5234635.0,
+      0.0,
+      5273892.0,
+      5234635.0
+    ]
+  },
+  {
+    "seconds": 1.776,
+    "doa_degrees": 103.0,
+    "speech": true,
+    "speech_energy": [
+      2434995.0,
+      0.0,
+      1996653.0,
+      2434995.0
+    ]
+  },
+  {
+    "seconds": 1.848,
+    "doa_degrees": 103.0,
+    "speech": true,
+    "speech_energy": [
+      658318.5,
+      0.0,
+      297679.375,
+      658318.5
+    ]
+  },
+  {
+    "seconds": 1.919,
+    "doa_degrees": 103.0,
+    "speech": true,
+    "speech_energy": [
+      181870.5,
+      0.0,
+      0.0,
+      181870.5
+    ]
+  },
+  {
+    "seconds": 1.991,
+    "doa_degrees": 103.0,
+    "speech": true,
+    "speech_energy": [
+      152849.875,
+      0.0,
+      59311.5,
+      152849.875
+    ]
+  },
+  {
+    "seconds": 2.063,
+    "doa_degrees": 103.0,
+    "speech": true,
+    "speech_energy": [
+      143624.75,
+      0.0,
+      109012.9921875,
+      143624.75
+    ]
+  },
+  {
+    "seconds": 2.124,
+    "doa_degrees": 103.0,
+    "speech": true,
+    "speech_energy": [
+      15790.595703125,
+      0.0,
+      2542.939453125,
+      15790.595703125
+    ]
+  },
+  {
+    "seconds": 2.196,
+    "doa_degrees": 103.0,
+    "speech": true,
+    "speech_energy": [
+      292066.71875,
+      0.0,
+      248711.640625,
+      292066.71875
+    ]
+  },
+  {
+    "seconds": 2.278,
+    "doa_degrees": 103.0,
+    "speech": true,
+    "speech_energy": [
+      2091424.5,
+      0.0,
+      2070494.5,
+      2091424.5
+    ]
+  },
+  {
+    "seconds": 2.36,
+    "doa_degrees": 103.0,
+    "speech": true,
+    "speech_energy": [
+      2036047.75,
+      0.0,
+      2070387.75,
+      2036047.75
+    ]
+  },
+  {
+    "seconds": 2.432,
+    "doa_degrees": 103.0,
+    "speech": true,
+    "speech_energy": [
+      1751163.25,
+      0.0,
+      1583594.125,
+      1751163.25
+    ]
+  },
+  {
+    "seconds": 2.504,
+    "doa_degrees": 104.0,
+    "speech": true,
+    "speech_energy": [
+      2394211.0,
+      0.0,
+      2049952.125,
+      2394211.0
+    ]
+  },
+  {
+    "seconds": 2.576,
+    "doa_degrees": 104.0,
+    "speech": true,
+    "speech_energy": [
+      630468.125,
+      0.0,
+      304094.59375,
+      630468.125
+    ]
+  },
+  {
+    "seconds": 2.648,
+    "doa_degrees": 104.0,
+    "speech": true,
+    "speech_energy": [
+      173687.640625,
+      0.0,
+      55310.5546875,
+      173687.640625
+    ]
+  },
+  {
+    "seconds": 2.719,
+    "doa_degrees": 104.0,
+    "speech": true,
+    "speech_energy": [
+      1883368.625,
+      0.0,
+      1546865.375,
+      1883368.625
+    ]
+  },
+  {
+    "seconds": 2.791,
+    "doa_degrees": 104.0,
+    "speech": true,
+    "speech_energy": [
+      2895352.5,
+      0.0,
+      2586243.75,
+      2895352.5
+    ]
+  },
+  {
+    "seconds": 2.863,
+    "doa_degrees": 104.0,
+    "speech": true,
+    "speech_energy": [
+      1220693.75,
+      0.0,
+      840675.4375,
+      1220693.75
+    ]
+  },
+  {
+    "seconds": 2.935,
+    "doa_degrees": 104.0,
+    "speech": true,
+    "speech_energy": [
+      201392.5,
+      0.0,
+      216561.046875,
+      201392.5
+    ]
+  },
+  {
+    "seconds": 3.006,
+    "doa_degrees": 104.0,
+    "speech": true,
+    "speech_energy": [
+      768405.375,
+      0.0,
+      805399.375,
+      768405.375
+    ]
+  },
+  {
+    "seconds": 3.078,
+    "doa_degrees": 104.0,
+    "speech": true,
+    "speech_energy": [
+      3131426.5,
+      0.0,
+      3151705.5,
+      3131426.5
+    ]
+  },
+  {
+    "seconds": 3.15,
+    "doa_degrees": 104.0,
+    "speech": true,
+    "speech_energy": [
+      2786998.5,
+      0.0,
+      2599059.25,
+      2786998.5
+    ]
+  },
+  {
+    "seconds": 3.222,
+    "doa_degrees": 104.0,
+    "speech": true,
+    "speech_energy": [
+      2625899.75,
+      0.0,
+      2338591.25,
+      2625899.75
+    ]
+  },
+  {
+    "seconds": 3.294,
+    "doa_degrees": 104.0,
+    "speech": true,
+    "speech_energy": [
+      923924.125,
+      0.0,
+      689215.9375,
+      923924.125
+    ]
+  },
+  {
+    "seconds": 3.366,
+    "doa_degrees": 104.0,
+    "speech": true,
+    "speech_energy": [
+      1826682.625,
+      0.0,
+      1926904.0,
+      1826682.625
+    ]
+  },
+  {
+    "seconds": 3.448,
+    "doa_degrees": 104.0,
+    "speech": true,
+    "speech_energy": [
+      2885742.5,
+      0.0,
+      2860781.75,
+      2885742.5
+    ]
+  },
+  {
+    "seconds": 3.52,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      5162721.0,
+      0.0,
+      5167030.0,
+      5162721.0
+    ]
+  },
+  {
+    "seconds": 3.591,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      4474737.0,
+      0.0,
+      3576654.0,
+      4474737.0
+    ]
+  },
+  {
+    "seconds": 3.663,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      1351718.375,
+      0.0,
+      648713.25,
+      1351718.375
+    ]
+  },
+  {
+    "seconds": 3.735,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      598594.375,
+      0.0,
+      392684.5,
+      598594.375
+    ]
+  },
+  {
+    "seconds": 3.807,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      3280308.5,
+      0.0,
+      3302621.5,
+      3280308.5
+    ]
+  },
+  {
+    "seconds": 3.879,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      2198308.5,
+      0.0,
+      1767478.75,
+      2198308.5
+    ]
+  },
+  {
+    "seconds": 3.951,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      666104.375,
+      0.0,
+      204809.53125,
+      666104.375
+    ]
+  },
+  {
+    "seconds": 4.023,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      489912.84375,
+      0.0,
+      392239.03125,
+      489912.84375
+    ]
+  },
+  {
+    "seconds": 4.094,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      717967.9375,
+      0.0,
+      684084.0,
+      717967.9375
+    ]
+  },
+  {
+    "seconds": 4.166,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      829704.625,
+      0.0,
+      860603.375,
+      829704.625
+    ]
+  },
+  {
+    "seconds": 4.248,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      2808500.25,
+      0.0,
+      2828541.75,
+      2808500.25
+    ]
+  },
+  {
+    "seconds": 4.32,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      3705200.5,
+      0.0,
+      3946362.25,
+      3705200.5
+    ]
+  },
+  {
+    "seconds": 4.392,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      2626030.0,
+      0.0,
+      2488561.0,
+      2626030.0
+    ]
+  },
+  {
+    "seconds": 4.464,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      3195646.5,
+      0.0,
+      3110444.25,
+      3195646.5
+    ]
+  },
+  {
+    "seconds": 4.536,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      1501222.0,
+      0.0,
+      1252016.375,
+      1501222.0
+    ]
+  },
+  {
+    "seconds": 4.608,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      347864.875,
+      0.0,
+      158822.5,
+      347864.875
+    ]
+  },
+  {
+    "seconds": 4.679,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      2219747.25,
+      0.0,
+      2353562.5,
+      2219747.25
+    ]
+  },
+  {
+    "seconds": 4.751,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      2415669.0,
+      0.0,
+      2227426.75,
+      2415669.0
+    ]
+  },
+  {
+    "seconds": 4.823,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      870880.5,
+      0.0,
+      660614.75,
+      870880.5
+    ]
+  },
+  {
+    "seconds": 4.895,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      309207.375,
+      0.0,
+      246137.90625,
+      309207.375
+    ]
+  },
+  {
+    "seconds": 4.966,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "seconds": 5.038,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "seconds": 5.11,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "seconds": 5.192,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      40799.9921875,
+      0.0,
+      13651.7705078125,
+      40799.9921875
+    ]
+  },
+  {
+    "seconds": 5.264,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "seconds": 5.346,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      646466.25,
+      0.0,
+      448249.46875,
+      646466.25
+    ]
+  },
+  {
+    "seconds": 5.428,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      2149404.25,
+      0.0,
+      1855003.875,
+      2149404.25
+    ]
+  },
+  {
+    "seconds": 5.51,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      2415131.0,
+      0.0,
+      2265044.75,
+      2415131.0
+    ]
+  },
+  {
+    "seconds": 5.582,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      4051966.5,
+      0.0,
+      3560806.25,
+      4051966.5
+    ]
+  },
+  {
+    "seconds": 5.654,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      2648533.0,
+      0.0,
+      2072676.75,
+      2648533.0
+    ]
+  },
+  {
+    "seconds": 5.736,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      1211443.625,
+      0.0,
+      530817.125,
+      1211443.625
+    ]
+  },
+  {
+    "seconds": 5.808,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      220314.875,
+      0.0,
+      0.0,
+      220314.875
+    ]
+  },
+  {
+    "seconds": 5.88,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      779435.9375,
+      0.0,
+      525499.25,
+      779435.9375
+    ]
+  },
+  {
+    "seconds": 5.952,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      1120840.875,
+      0.0,
+      615686.1875,
+      1120840.875
+    ]
+  },
+  {
+    "seconds": 6.024,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      359902.15625,
+      0.0,
+      114770.6328125,
+      359902.15625
+    ]
+  },
+  {
+    "seconds": 6.096,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      2372659.5,
+      0.0,
+      2402245.25,
+      2372659.5
+    ]
+  },
+  {
+    "seconds": 6.167,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      2265331.5,
+      0.0,
+      1822729.375,
+      2265331.5
+    ]
+  },
+  {
+    "seconds": 6.239,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      4046304.0,
+      0.0,
+      3679634.0,
+      4046304.0
+    ]
+  },
+  {
+    "seconds": 6.311,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      3586157.5,
+      0.0,
+      3414177.25,
+      3586157.5
+    ]
+  },
+  {
+    "seconds": 6.383,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      1297417.125,
+      0.0,
+      963778.625,
+      1297417.125
+    ]
+  },
+  {
+    "seconds": 6.454,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      741408.25,
+      0.0,
+      477854.375,
+      741408.25
+    ]
+  },
+  {
+    "seconds": 6.537,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      4222428.5,
+      0.0,
+      4277484.0,
+      4222428.5
+    ]
+  },
+  {
+    "seconds": 6.608,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      3890677.25,
+      0.0,
+      3353531.25,
+      3890677.25
+    ]
+  },
+  {
+    "seconds": 6.68,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      5977037.5,
+      0.0,
+      5030451.5,
+      5977037.5
+    ]
+  },
+  {
+    "seconds": 6.752,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      4037490.75,
+      0.0,
+      2802625.25,
+      4037490.75
+    ]
+  },
+  {
+    "seconds": 6.824,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      370106.875,
+      0.0,
+      0.0,
+      370106.875
+    ]
+  },
+  {
+    "seconds": 6.896,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      311622.9375,
+      1345.27294921875,
+      0.0,
+      311622.9375
+    ]
+  },
+  {
+    "seconds": 6.968,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "seconds": 7.04,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      532046.1875,
+      0.0,
+      453516.25,
+      532046.1875
+    ]
+  },
+  {
+    "seconds": 7.111,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      3013223.25,
+      0.0,
+      2890165.25,
+      3013223.25
+    ]
+  },
+  {
+    "seconds": 7.183,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      2058795.375,
+      0.0,
+      1411224.625,
+      2058795.375
+    ]
+  },
+  {
+    "seconds": 7.255,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      359685.15625,
+      0.0,
+      16853.58984375,
+      359685.15625
+    ]
+  },
+  {
+    "seconds": 7.327,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      616188.6875,
+      0.0,
+      391314.46875,
+      616188.6875
+    ]
+  },
+  {
+    "seconds": 7.398,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      1834328.75,
+      0.0,
+      1606185.25,
+      1834328.75
+    ]
+  },
+  {
+    "seconds": 7.48,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      1969151.5,
+      0.0,
+      1736271.625,
+      1969151.5
+    ]
+  },
+  {
+    "seconds": 7.552,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      1735775.5,
+      0.0,
+      1254199.125,
+      1735775.5
+    ]
+  },
+  {
+    "seconds": 7.624,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      1803175.5,
+      0.0,
+      1642705.75,
+      1803175.5
+    ]
+  },
+  {
+    "seconds": 7.696,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      4397879.5,
+      0.0,
+      4149494.25,
+      4397879.5
+    ]
+  },
+  {
+    "seconds": 7.768,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      1900901.0,
+      0.0,
+      1232312.75,
+      1900901.0
+    ]
+  },
+  {
+    "seconds": 7.839,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      490540.0,
+      0.0,
+      0.0,
+      490540.0
+    ]
+  },
+  {
+    "seconds": 7.911,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "seconds": 7.983,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "seconds": 8.045,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "seconds": 8.116,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      124200.484375,
+      0.0,
+      44995.90234375,
+      124200.484375
+    ]
+  },
+  {
+    "seconds": 8.198,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      102970.0234375,
+      0.0,
+      35431.359375,
+      102970.0234375
+    ]
+  },
+  {
+    "seconds": 8.27,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      35500.1015625,
+      0.0,
+      0.0,
+      35500.1015625
+    ]
+  },
+  {
+    "seconds": 8.342,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "seconds": 8.414,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "seconds": 8.486,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      837315.0,
+      0.0,
+      720158.75,
+      837315.0
+    ]
+  },
+  {
+    "seconds": 8.568,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      1791972.0,
+      0.0,
+      1724944.625,
+      1791972.0
+    ]
+  },
+  {
+    "seconds": 8.64,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      910005.375,
+      0.0,
+      739146.625,
+      910005.375
+    ]
+  },
+  {
+    "seconds": 8.712,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      270780.65625,
+      45330.17578125,
+      205710.59375,
+      270780.65625
+    ]
+  },
+  {
+    "seconds": 8.784,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      292859.3125,
+      0.0,
+      303806.0625,
+      292859.3125
+    ]
+  },
+  {
+    "seconds": 8.856,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      4373204.0,
+      0.0,
+      5342543.0,
+      4373204.0
+    ]
+  },
+  {
+    "seconds": 8.927,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      2506701.5,
+      0.0,
+      2696640.5,
+      2506701.5
+    ]
+  },
+  {
+    "seconds": 8.999,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      1186703.5,
+      0.0,
+      874013.875,
+      1186703.5
+    ]
+  },
+  {
+    "seconds": 9.071,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      338371.75,
+      0.0,
+      195252.640625,
+      338371.75
+    ]
+  },
+  {
+    "seconds": 9.143,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      169753.40625,
+      0.0,
+      58961.796875,
+      169753.40625
+    ]
+  },
+  {
+    "seconds": 9.215,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      226752.71875,
+      0.0,
+      126184.8828125,
+      226752.71875
+    ]
+  },
+  {
+    "seconds": 9.286,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      743138.75,
+      0.0,
+      869871.125,
+      743138.75
+    ]
+  },
+  {
+    "seconds": 9.369,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      1415014.0,
+      0.0,
+      1389169.875,
+      1415014.0
+    ]
+  },
+  {
+    "seconds": 9.44,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      1738082.375,
+      0.0,
+      1452749.25,
+      1738082.375
+    ]
+  },
+  {
+    "seconds": 9.512,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      587579.3125,
+      0.0,
+      527494.625,
+      587579.3125
+    ]
+  },
+  {
+    "seconds": 9.584,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      343569.15625,
+      0.0,
+      243874.3125,
+      343569.15625
+    ]
+  },
+  {
+    "seconds": 9.656,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      88268.46875,
+      0.0,
+      63625.859375,
+      88268.46875
+    ]
+  },
+  {
+    "seconds": 9.728,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      758807.3125,
+      0.0,
+      718037.0625,
+      758807.3125
+    ]
+  },
+  {
+    "seconds": 9.799,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      662354.1875,
+      0.0,
+      605164.0,
+      662354.1875
+    ]
+  },
+  {
+    "seconds": 9.871,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      277229.125,
+      0.0,
+      195468.375,
+      277229.125
+    ]
+  },
+  {
+    "seconds": 9.943,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      733292.375,
+      0.0,
+      491270.40625,
+      733292.375
+    ]
+  },
+  {
+    "seconds": 10.015,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      604662.875,
+      0.0,
+      616287.25,
+      604662.875
+    ]
+  },
+  {
+    "seconds": 10.086,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      12529.28125,
+      0.0,
+      75351.0625,
+      12529.28125
+    ]
+  },
+  {
+    "seconds": 10.158,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      882417.5,
+      0.0,
+      858387.9375,
+      882417.5
+    ]
+  },
+  {
+    "seconds": 10.23,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      2650100.75,
+      0.0,
+      3249351.0,
+      2650100.75
+    ]
+  },
+  {
+    "seconds": 10.312,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      630535.1875,
+      0.0,
+      953980.9375,
+      630535.1875
+    ]
+  },
+  {
+    "seconds": 10.384,
+    "doa_degrees": 104.0,
+    "speech": true,
+    "speech_energy": [
+      0.0,
+      168795.25,
+      0.0,
+      168795.25
+    ]
+  },
+  {
+    "seconds": 10.456,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      0.0,
+      53320.484375,
+      0.0,
+      53320.484375
+    ]
+  },
+  {
+    "seconds": 10.528,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      0.0,
+      25473.27734375,
+      0.0,
+      25473.27734375
+    ]
+  },
+  {
+    "seconds": 10.61,
+    "doa_degrees": 105.0,
+    "speech": true,
+    "speech_energy": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "seconds": 10.692,
+    "doa_degrees": 135.0,
+    "speech": true,
+    "speech_energy": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "seconds": 10.774,
+    "doa_degrees": 151.0,
+    "speech": true,
+    "speech_energy": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "seconds": 10.846,
+    "doa_degrees": 158.0,
+    "speech": true,
+    "speech_energy": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "seconds": 10.918,
+    "doa_degrees": 160.0,
+    "speech": true,
+    "speech_energy": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "seconds": 10.989,
+    "doa_degrees": 161.0,
+    "speech": true,
+    "speech_energy": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "seconds": 11.061,
+    "doa_degrees": 161.0,
+    "speech": true,
+    "speech_energy": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "seconds": 11.133,
+    "doa_degrees": 161.0,
+    "speech": true,
+    "speech_energy": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "seconds": 11.205,
+    "doa_degrees": 161.0,
+    "speech": true,
+    "speech_energy": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "seconds": 11.277,
+    "doa_degrees": 161.0,
+    "speech": false,
+    "speech_energy": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "seconds": 11.348,
+    "doa_degrees": 161.0,
+    "speech": false,
+    "speech_energy": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "seconds": 11.43,
+    "doa_degrees": 161.0,
+    "speech": false,
+    "speech_energy": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "seconds": 11.502,
+    "doa_degrees": 161.0,
+    "speech": false,
+    "speech_energy": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "seconds": 11.574,
+    "doa_degrees": 161.0,
+    "speech": false,
+    "speech_energy": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "seconds": 11.646,
+    "doa_degrees": 161.0,
+    "speech": false,
+    "speech_energy": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "seconds": 11.718,
+    "doa_degrees": 161.0,
+    "speech": false,
+    "speech_energy": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "seconds": 11.8,
+    "doa_degrees": 161.0,
+    "speech": false,
+    "speech_energy": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "seconds": 11.872,
+    "doa_degrees": 161.0,
+    "speech": false,
+    "speech_energy": [
+      0.0,
+      752322.5625,
+      0.0,
+      752322.5625
+    ]
+  },
+  {
+    "seconds": 11.943,
+    "doa_degrees": 161.0,
+    "speech": true,
+    "speech_energy": [
+      0.0,
+      769738.3125,
+      0.0,
+      769738.3125
+    ]
+  }
+]

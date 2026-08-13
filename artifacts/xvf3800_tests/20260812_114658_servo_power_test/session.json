@@ -1,0 +1,37 @@
+{
+  "metadata": {
+    "configuration": "servo_power_test",
+    "created": "2026-08-12T11:46:58.613383-05:00",
+    "distance_metres": 1.0,
+    "audio_device_index": 1,
+    "audio_device_name": "reSpeaker XVF3800 4-Mic Array: USB Audio (hw:2,0)",
+    "sample_rate": 16000,
+    "channels": 2
+  },
+  "trials": [
+    {
+      "name": "servos",
+      "kind": "silence",
+      "angle": null,
+      "servos": true,
+      "duration": 15,
+      "instructions": "The eye, eyelid, and head servos will move automatically.",
+      "wav_file": "servos.wav",
+      "capture_complete": true,
+      "captured_seconds": 15.0,
+      "rms_dbfs": -25.63,
+      "peak_dbfs": -2.21,
+      "clipped_samples": 0,
+      "control_samples": 207,
+      "speech_fraction": 0.986,
+      "mean_doa_degrees": 86.8,
+      "mean_speech_energy": [
+        443948.31,
+        411384.93,
+        413009.55,
+        810174.69
+      ],
+      "above_quiet_db": ""
+    }
+  ]
+}

@@ -87,8 +87,9 @@ ENABLE_MID_RESPONSE_STOP = True
 # AUDIO DEVICES
 # =========================
 
-# ALSA microphone input device
-MIC_DEVICE = "plughw:2,0"
+# Stable PortAudio device-name fragment for the ReSpeaker. Avoid numeric device
+# indexes: HDMI and USB enumeration order can change across boots.
+MIC_DEVICE = "reSpeaker XVF3800 4-Mic Array"
 
 # ALSA speaker output device. Use the PipeWire/ALSA default selected by wpctl.
 SPEAKER_DEVICE = "default"
@@ -124,16 +125,17 @@ MID_RESPONSE_STOP_MODEL_PATH = "/home/flyntm/projects/ezra/ezra_stop.onnx"
 
 # Mid-response stop sensitivity while Ezra is speaking.
 # Require sustained confidence so Ezra's own amplified voice is less likely to
-# be mistaken for a stop request.
-MID_RESPONSE_STOP_GUARD_THRESHOLD = 0.45
-MID_RESPONSE_STOP_GUARD_HITS = 3
+# be mistaken for a stop request. This is intentionally more sensitive than
+# the idle stop guard because the user is competing with Ezra's speaker.
+MID_RESPONSE_STOP_GUARD_THRESHOLD = 0.30
+MID_RESPONSE_STOP_GUARD_HITS = 2
 
 # Lower stop threshold while ReSpeaker hardware VAD sees active speech.
-MID_RESPONSE_STOP_VAD_ASSIST_THRESHOLD = 0.40
+MID_RESPONSE_STOP_VAD_ASSIST_THRESHOLD = 0.22
 
 # Do not normalize and classify near-silence. Servo and room noise can otherwise
 # be amplified into a convincing stop-model input while Ezra is speaking.
-MID_RESPONSE_STOP_MIN_INPUT_RMS = 0.008
+MID_RESPONSE_STOP_MIN_INPUT_RMS = 0.0015
 
 # Boost microphone input used for stop detection while TTS is playing.
 MID_RESPONSE_STOP_MIC_GAIN = 2.5
@@ -406,7 +408,7 @@ DEBUG_AUDIO_SAMPLE_RATE = 16000
 # WAKE PIPELINE
 # =========================
 
-WAKE_MIC_DEVICE = 0
+WAKE_MIC_DEVICE = MIC_DEVICE
 WAKE_SAMPLE_RATE = 16000
 WAKE_CHANNELS = 1
 WAKE_BLOCK_SIZE = 1024
@@ -456,7 +458,7 @@ WAKE_MIC_RELEASE_DELAY = 0.08
 # LISTEN PIPELINE
 # =========================
 
-LISTEN_MIC_DEVICE = 0
+LISTEN_MIC_DEVICE = MIC_DEVICE
 LISTEN_SAMPLE_RATE = 16000
 LISTEN_CHANNELS = 1
 LISTEN_BLOCKSIZE = 1024

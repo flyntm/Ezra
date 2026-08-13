@@ -1,0 +1,7 @@
+name,kind,angle,servos,duration,wav_file,capture_complete,captured_seconds,rms_dbfs,peak_dbfs,above_quiet_db,clipped_samples,speech_fraction,mean_doa_degrees,mean_speech_energy
+quiet,silence,,False,10,quiet.wav,True,10.0,-49.6,-35.46,,0,0.0,,"[0.0, 0.0, 0.0, 0.0]"
+servos,silence,,True,15,servos.wav,True,15.0,-18.74,-4.6,30.86,0,0.971,129.8,"[213887.46, 588887.72, 183087.64, 761818.2]"
+speech_0,speech,0,False,12,speech_0.wav,True,12.0,-27.18,-6.09,22.42,0,0.885,181.8,"[542228.36, 0.0, 333304.07, 546734.17]"
+speech_90,speech,90,False,12,speech_90.wav,True,12.0,-28.68,-7.32,20.92,0,0.927,97.6,"[1507.6, 1013660.14, 817418.64, 1014598.85]"
+speech_0_servos,speech,0,True,12,speech_0_servos.wav,True,12.0,-25.78,-5.03,23.82,0,0.982,109.8,"[324435.3, 726932.68, 242621.31, 1074251.82]"
+speech_90_servos,speech,90,True,12,speech_90_servos.wav,True,12.0,-26.55,-7.66,23.05,0,0.976,100.8,"[375000.35, 194466.74, 294908.61, 607253.55]"

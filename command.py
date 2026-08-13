@@ -8,7 +8,17 @@ import state
 
 from config import GOODBYE_TEXT
 from live_info import get_live_info_response
-from presentations import is_introduction_request, present_introduction
+from presentations import (
+    handle_presentation_command,
+    is_introduction_request,
+    is_name_origin_request,
+    is_presentation_request,
+    is_rehearsal_request,
+    present_introduction,
+    present_name_origin,
+    start_presentation,
+)
+from presentations.powerpoint import PresentationError
 from tts import speak
 from wake_word import reset_idle_timer
 
@@ -154,6 +164,22 @@ def handle_local_command(command):
 
     text_lower = command.lower()
 
+    if handle_presentation_command(command, speak):
+        reset_idle_timer()
+        return True
+
+    if is_rehearsal_request(command) or is_presentation_request(command):
+        try:
+            start_presentation(
+                speak,
+                rehearsal=is_rehearsal_request(command),
+            )
+        except PresentationError as exc:
+            print(f"⚠️ Presentation failed: {exc}")
+            speak(f"I couldn't start the presentation. {exc}")
+        reset_idle_timer()
+        return True
+
     if looks_like_quit_command(command):
         speak(GOODBYE_TEXT)
         state.shutting_down = True
@@ -218,6 +244,30 @@ def handle_local_command(command):
         ]
 
         present_introduction(
+            speak,
+            smile=lambda seconds: set_temporary_emotion("happy", seconds),
+            look_targets=look_targets,
+        )
+        head_tracker.center()
+        reset_idle_timer()
+        return True
+
+    if is_name_origin_request(command):
+        from ezra_emotion import set_temporary_emotion
+        from robot.head_tracking import head_tracker
+
+        audience_bearings = (-35.0, -18.0, 0.0, 18.0, 35.0)
+        look_targets = [
+            lambda target=target: head_tracker.turn_toward_bearing(
+                target - head_tracker.current_yaw,
+                source="presentation",
+                step_delay_seconds=0.05,
+                announce=False,
+            )
+            for target in audience_bearings
+        ]
+
+        present_name_origin(
             speak,
             smile=lambda seconds: set_temporary_emotion("happy", seconds),
             look_targets=look_targets,

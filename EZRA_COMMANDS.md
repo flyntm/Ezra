@@ -9,6 +9,11 @@ command immediately after the wake phrase or wait for Ezra to begin listening.
 | --- | --- |
 | "What time is it?" | Speaks the current local time. |
 | "Set volume to 1" through "Set volume to 10" | Sets speaker volume from 10% to 100%. Number words also work. |
+| "Start the Acts presentation" | Opens slide 1 and speaks its script. |
+| "Next slide" / "Previous slide" | Moves the active presentation and speaks the matching script. |
+| "Reveal the answer" | Speaks the response for the discussion slide. |
+| "Stop the presentation" | Closes the active slideshow. |
+| "Rehearse the presentation" | Prints a full rehearsal without opening slides or using TTS. |
 | "Quit," "exit," or "stop" | Exits the Ezra program. |
 | "Quit program," "exit program," or "stop program" | Exits the Ezra program. |
 | "Shutdown," "shut down," or "power off" | Exits Ezra and attempts to power off the computer. |
@@ -68,3 +73,5 @@ again.
   key.
 - Volume control and system shutdown depend on the operating system commands
   being available and permitted.
+- PowerPoint slides are converted locally to HTML and displayed in Chromium;
+  the original deck is not modified.

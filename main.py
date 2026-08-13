@@ -82,11 +82,7 @@ def acknowledge_wake_word(comment_cancel=None, comment_thread=None):
             print(f"👂 Follow-up ignored or canceled: {command}")
             break
 
-        if (
-            command
-            and not is_wake_word_only(command)
-            and len(command.split()) >= 2
-        ):
+        if command and not is_wake_word_only(command) and len(command.split()) >= 2:
             follow_up_bearing = get_last_command_doa()
             if (
                 follow_up_bearing is not None
@@ -124,10 +120,7 @@ def stop_thinking_comment(cancel_event, comment_thread):
     if cancel_event is None:
         return
 
-    if (
-        comment_thread is not None
-        and comment_thread.comment_started_event.is_set()
-    ):
+    if comment_thread is not None and comment_thread.comment_started_event.is_set():
         # Once Ezra starts a sentence, finishing it sounds more natural than
         # cutting it off when transcription or the AI response completes.
         comment_thread.join(timeout=10.0)
@@ -194,10 +187,7 @@ def shutdown_robot():
     print("\n🛑 Shutting down Ezra...")
 
     try:
-        if (
-            ENABLE_HEAD_TRACKING
-            and not ENABLE_INTERACTION_DIAGNOSTIC
-        ):
+        if ENABLE_HEAD_TRACKING and not ENABLE_INTERACTION_DIAGNOSTIC:
             from robot.head_tracking import head_tracker
 
             head_tracker.center()
@@ -260,9 +250,7 @@ def main():
                     f"{active_angle:+.1f}°" if active_angle is not None else "n/a"
                 )
                 settled_label = (
-                    f"{settled_angle:+.1f}°"
-                    if settled_angle is not None
-                    else "n/a"
+                    f"{settled_angle:+.1f}°" if settled_angle is not None else "n/a"
                 )
                 agreement_label = (
                     f"{agreement:.1f}°" if agreement is not None else "n/a"
