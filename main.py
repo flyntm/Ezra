@@ -137,8 +137,6 @@ def stop_thinking_comment(cancel_event, comment_thread):
 def log_speaker_output_sanity():
     """Print a quick, non-blocking speaker routing sanity check."""
 
-    print(f"🔊 Configured speaker device: {SPEAKER_DEVICE}")
-
     if shutil.which("aplay") is None:
         print("⚠️ 'aplay' not found in PATH; TTS playback will fail.")
 
@@ -374,6 +372,10 @@ def main():
                 comment_thread = None
 
             if handle_local_command(command):
+                # Spoken local commands return to standby when TTS finishes.
+                # Silent commands, such as direct slide jumps or displaying
+                # answers, need the same reset explicitly.
+                set_emotion(EMOTION_STANDBY)
                 # Run optional audio replay diagnostics after Ezra responds.
                 maybe_playback_diagnostic()
                 continue

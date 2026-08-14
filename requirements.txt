@@ -27,6 +27,7 @@ ctranslate2==4.7.2
 deepgram-sdk==7.2.0
 distro==1.9.0
 esptool==5.3.0
+evdev==1.9.2
 faster-whisper==1.2.1
 filelock==3.29.0
 flatbuffers==20181003210633

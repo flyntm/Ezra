@@ -1,6 +1,7 @@
 import contextlib
 import math
 import os
+import threading
 import time
 from collections import deque
 
@@ -60,7 +61,6 @@ from config import (
     WAKE_TAIL_TRIM_SECONDS_EZRA,
     WAKE_TAIL_TRIM_SECONDS_HEY_EZRA,
     WAKE_THRESHOLD as THRESHOLD,
-    QUIET_STARTUP,
     VERBOSE_RUNTIME_LOGS,
     SOUND_GAZE_MAX_BEARING_DEGREES,
     SOUND_GAZE_MAX_EYE_OFFSET,
@@ -92,10 +92,6 @@ else:
 # =========================
 
 mic = create_respeaker_or_raise()
-
-if not QUIET_STARTUP:
-    print("✅ ReSpeaker Connected")
-
 
 # =========================
 # MODEL
@@ -130,10 +126,6 @@ with suppress_stderr():
         ],
         inference_framework="onnx",
     )
-
-if not QUIET_STARTUP:
-    print("Loaded models:", model.models.keys())
-
 
 # =========================
 # AUDIO HELPERS
@@ -188,6 +180,8 @@ audio_buffer_idx = 0
 recent_buffer_idx = 0
 audio_buffer_len = 0
 recent_buffer_len = 0
+audio_ready = threading.Event()
+_last_stream_status_log_at = 0.0
 
 
 # =========================
@@ -436,9 +430,13 @@ def audio_callback(indata, frames, time_info, status):
     global audio_buffer, recent_audio_buffer
     global audio_buffer_idx, recent_buffer_idx
     global audio_buffer_len, recent_buffer_len
+    global _last_stream_status_log_at
 
     if status:
-        print("⚠️", status)
+        now = time.monotonic()
+        if now - _last_stream_status_log_at >= RESPEAKER_ERROR_LOG_INTERVAL_SECONDS:
+            print("⚠️", status)
+            _last_stream_status_log_at = now
 
     audio = indata[:, 0].copy()
     n_samples = len(audio)
@@ -472,6 +470,7 @@ def audio_callback(indata, frames, time_info, status):
         recent_buffer_idx = n_samples - remaining
 
     recent_buffer_len = min(recent_buffer_size, recent_buffer_len + n_samples)
+    audio_ready.set()
 
 
 # =========================
@@ -800,13 +799,19 @@ def run(return_audio=False):
         else:
             robot_emotions.clear_external_gaze()
 
-    print("\n✅ Ready")
     print("\n👂 Listening for wake words...\n")
 
     stream = open_microphone()
 
     try:
         while True:
+            # Run wake-word inference once per fresh microphone block. Without
+            # this gate the loop repeatedly infers on identical audio and can
+            # starve PortAudio's Python callback, causing input overflows.
+            if not audio_ready.wait(timeout=0.25):
+                continue
+            audio_ready.clear()
+
             current_time = time.time()
 
             # =========================

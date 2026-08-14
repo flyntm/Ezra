@@ -6,7 +6,6 @@ import threading
 import board
 import busio
 from adafruit_pca9685 import PCA9685
-from config import QUIET_STARTUP
 from robot.constants import *
 
 pca = None
@@ -17,13 +16,9 @@ def init(_=None):
     global pca
     with _pca_lock:
         try:
-            if not QUIET_STARTUP:
-                print("[servos] Initializing PCA9685...")
             i2c = busio.I2C(board.SCL, board.SDA)
             pca = PCA9685(i2c)
             pca.frequency = 50
-            if not QUIET_STARTUP:
-                print("[servos] PCA9685 initialized OK")
             return True
         except Exception as e:
             print(f"[servos] ERROR initializing PCA9685: {e}")

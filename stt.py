@@ -78,9 +78,6 @@ with suppress_stderr():
         compute_type=WHISPER_COMPUTE_TYPE,
     )
 
-print("✅ Model loaded")
-
-
 # --------------------------------------------------
 # TRANSCRIPTION
 # --------------------------------------------------

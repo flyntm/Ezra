@@ -47,9 +47,7 @@ def prepare_thinking_comments():
         if path.exists() or generate_speech_file(text, path):
             _cached_comments.append((text, path))
 
-    if _cached_comments:
-        print(f"💭 Prepared {len(_cached_comments)} thinking comments")
-    else:
+    if not _cached_comments:
         print("⚠️ Thinking comments unavailable")
 
 

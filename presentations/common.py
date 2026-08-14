@@ -23,7 +23,7 @@ INTRODUCTION_WARNING = (
 INTRODUCTION_CLOSING = "Thanks for having me. I'm excited to be here!"
 
 NAME_ORIGIN_OPENING = (
-    "My name comes from Ezra in the Bible. He was a priest, scribe, teacher, "
+    "My name comes from Ezra in the Bible; he was a priest, scribe, teacher, "
     "and all-around smart guy."
 )
 
@@ -37,7 +37,7 @@ NAME_ORIGIN_CLOSING = (
     "the resemblance is uncanny!"
 )
 
-NAME_ORIGIN = " ".join(
+NAME_ORIGIN = " — ".join(
     (NAME_ORIGIN_OPENING, NAME_ORIGIN_EXPLANATION, NAME_ORIGIN_CLOSING)
 )
 

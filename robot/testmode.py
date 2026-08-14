@@ -20,7 +20,6 @@ from config import (
     MOUTH_LED_PIN,
     MOUTH_LED_STRIP_COUNT,
     MOUTH_LEDS_PER_STRIP,
-    QUIET_STARTUP,
 )
 from robot import servos
 from robot import eyes
@@ -50,8 +49,6 @@ def init_neopixel(silent=False):
         return True
 
     try:
-        if not silent and not QUIET_STARTUP:
-            print("[testmode] Initializing Neopixel on D18...")
         pixels = neopixel.NeoPixel(
             LED_PIN,
             LED_COUNT,
@@ -61,15 +58,12 @@ def init_neopixel(silent=False):
         )
         neopixel_ready = True
         clear_neopixel(silent=True)
-        if not silent and not QUIET_STARTUP:
-            print("[testmode] Neopixel initialized successfully on D18")
-            print("[testmode] LEDs initialized OFF")
         return True
     except Exception as e:
         if not silent:
-            print(f"[testmode] Neopixel initialization FAILED: {e}")
-            print(f"[testmode] Error type: {type(e).__name__}")
-            print("[testmode] Check: Is D18 correctly wired to LED DIN?")
+            print(f"[mouth] NeoPixel initialization failed: {e}")
+            print(f"[mouth] Error type: {type(e).__name__}")
+            print("[mouth] Check: Is D18 correctly wired to LED DIN?")
         pixels = None
         neopixel_ready = False
         return False

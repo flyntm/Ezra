@@ -16,6 +16,7 @@ from presentations import (
     is_rehearsal_request,
     present_introduction,
     present_name_origin,
+    requested_start_slide,
     start_presentation,
 )
 from presentations.powerpoint import PresentationError
@@ -173,6 +174,7 @@ def handle_local_command(command):
             start_presentation(
                 speak,
                 rehearsal=is_rehearsal_request(command),
+                slide_number=requested_start_slide(command),
             )
         except PresentationError as exc:
             print(f"⚠️ Presentation failed: {exc}")

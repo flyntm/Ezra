@@ -127,18 +127,18 @@ MID_RESPONSE_STOP_MODEL_PATH = "/home/flyntm/projects/ezra/ezra_stop.onnx"
 # Require sustained confidence so Ezra's own amplified voice is less likely to
 # be mistaken for a stop request. This is intentionally more sensitive than
 # the idle stop guard because the user is competing with Ezra's speaker.
-MID_RESPONSE_STOP_GUARD_THRESHOLD = 0.30
+MID_RESPONSE_STOP_GUARD_THRESHOLD = 0.22
 MID_RESPONSE_STOP_GUARD_HITS = 2
 
 # Lower stop threshold while ReSpeaker hardware VAD sees active speech.
-MID_RESPONSE_STOP_VAD_ASSIST_THRESHOLD = 0.22
+MID_RESPONSE_STOP_VAD_ASSIST_THRESHOLD = 0.16
 
 # Do not normalize and classify near-silence. Servo and room noise can otherwise
 # be amplified into a convincing stop-model input while Ezra is speaking.
 MID_RESPONSE_STOP_MIN_INPUT_RMS = 0.0015
 
 # Boost microphone input used for stop detection while TTS is playing.
-MID_RESPONSE_STOP_MIC_GAIN = 2.5
+MID_RESPONSE_STOP_MIC_GAIN = 3.0
 
 # Normalize quiet mid-response stop audio toward this RMS before inference.
 MID_RESPONSE_STOP_TARGET_RMS = 0.08
@@ -220,10 +220,15 @@ PIPER_PATH = "~/projects/piper_tts/piper"
 TTS_MODEL_PATH = "/home/flyntm/projects/ezra/voices/en_US-bryce-medium.onnx"
 
 #  Talking Speed - Piper phoneme duration. Lower is faster; 1.0 is the voice model's default.
-TTS_LENGTH_SCALE = 0.8
+TTS_LENGTH_SCALE = 0.85
+
+# Text inside [Emph]...[/Emph] is spoken more deliberately. Higher is slower.
+TTS_EMPHASIS_LENGTH_SCALE_MULTIPLIER = 1.35
+TTS_EMPHASIS_GAIN = 1.12
+TTS_EMPHASIS_BOUNDARY_PAUSE_SECONDS = 0.40
 
 # Silence Piper adds after sentence-ending punctuation.
-TTS_SENTENCE_SILENCE = 0.08
+TTS_SENTENCE_SILENCE = 0.8
 
 # Optional personality comments played while a non-local AI request is pending.
 # Audio is generated once and cached. Pending comments are canceled when work
@@ -250,6 +255,10 @@ TTS_START_DELAY = 0.05
 
 # Split long responses into smaller TTS files so playback starts sooner.
 TTS_CHUNK_MAX_CHARS = 140
+
+# Keep slide narration in one continuous WAV when practical. This avoids the
+# generation/launch gap between short TTS chunks sounding like a long period.
+PRESENTATION_TTS_CHUNK_MAX_CHARS = 5000
 
 # Drive mouth shapes from short loudness windows in Piper's generated WAV.
 TTS_MOUTH_SYNC_WINDOW_SECONDS = 0.04
@@ -306,10 +315,12 @@ MOUTH_LED_TALK_FRAME_DELAY = 0.2
 MOUTH_LED_THINK_DURATION = 4.0
 MOUTH_LED_THINK_STEP_DELAY = 0.25
 MOUTH_LED_THINK_FULL_PAUSE = 1.5
+MOUTH_LED_STANDBY_INTENSITY = 0.05
 
 MOUTH_LED_MODE_SMILE = "smile"
 MOUTH_LED_MODE_FROWN = "frown"
 MOUTH_LED_MODE_TALK = "talk"
+MOUTH_LED_MODE_STANDBY = "standby"
 MOUTH_LED_MODE_LISTENING = "listening"
 MOUTH_LED_MODE_THINKING = "thinking"
 
@@ -317,6 +328,7 @@ MOUTH_LED_SELECTED_HUES = {
     MOUTH_LED_MODE_SMILE: 354,
     MOUTH_LED_MODE_FROWN: 252,
     MOUTH_LED_MODE_TALK: 24,
+    MOUTH_LED_MODE_STANDBY: 335,
     MOUTH_LED_MODE_LISTENING: 114,
     MOUTH_LED_MODE_THINKING: 216,
 }
@@ -431,9 +443,9 @@ PREBUFFER_SECONDS = 1.10
 
 CONTINUOUS_CAPTURE_AFTER_WAKE = True
 
-# Keep the first post-wake pause short; wake-only interactions acknowledge and
-# then open a separate five-second follow-up listening turn.
-WAKE_COMMAND_TIMEOUT = 1.5
+# Allow a natural pause after the wake word before treating the interaction as
+# wake-only and opening the separate follow-up listening turn.
+WAKE_COMMAND_TIMEOUT = 3.0
 WAKE_MAX_COMMAND_TIME = 10.0
 WAKE_ACTIVE_RMS_THRESHOLD = 0.0055
 WAKE_END_SILENCE = 0.95

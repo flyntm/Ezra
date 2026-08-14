@@ -14,9 +14,11 @@ from config import (
     MOUTH_LED_MODE_FROWN,
     MOUTH_LED_MODE_LISTENING,
     MOUTH_LED_MODE_SMILE,
+    MOUTH_LED_MODE_STANDBY,
     MOUTH_LED_MODE_TALK,
     MOUTH_LED_MODE_THINKING,
     MOUTH_LED_SELECTED_HUES,
+    MOUTH_LED_STANDBY_INTENSITY,
     MOUTH_LED_TALK_FRAME_DELAY,
     MOUTH_LED_THINK_FULL_PAUSE,
     MOUTH_LED_THINK_STEP_DELAY,
@@ -127,7 +129,8 @@ class RobotEmotionController:
 
             eyelids.init()
             eyes.init()
-            testmode.init_neopixel(silent=False)
+            if not testmode.init_neopixel(silent=False):
+                return False
             animation.reset()
             eyes.center()
             eyelids.open_lids()
@@ -344,7 +347,7 @@ class RobotEmotionController:
         if emotion == "standby":
             self._set_lids(1.0)
             eyes.gaze_smooth(90, 86, steps=12, duration=0.12)
-            self._clear_mouth()
+            self._mouth_standby()
         elif emotion == "normal_talking":
             self._set_lids(1.0)
             eyes.gaze_smooth(90, 90, steps=12, duration=0.12)
@@ -397,7 +400,7 @@ class RobotEmotionController:
             )
 
         self._maybe_blink(now)
-        self._clear_mouth()
+        self._mouth_standby()
 
     @staticmethod
     def _choose_standby_gaze():
@@ -667,8 +670,8 @@ class RobotEmotionController:
         patterns = (
             [
                 [0, 0, 0, 0, 0, 0, 0, 0],
-                [0, 1, 1, 1, 1, 1, 1, 0],
-                [0, 0, 0, 0, 0, 0, 0, 0],
+                [0, 1, 0, 0, 0, 0, 1, 0],
+                [0, 0, 1, 1, 1, 1, 0, 0],
             ],
             [
                 [0, 0, 0, 0, 0, 0, 0, 0],
@@ -722,6 +725,16 @@ class RobotEmotionController:
             self._mouth_mode_color(MOUTH_LED_MODE_LISTENING),
         )
 
+    def _mouth_standby(self):
+        self._show_mouth_pattern(
+            [
+                [0, 0, 0, 0, 0, 0, 0, 0],
+                [0, 1, 0, 0, 0, 0, 1, 0],
+                [0, 0, 1, 1, 1, 1, 0, 0],
+            ],
+            self._mouth_mode_color(MOUTH_LED_MODE_STANDBY),
+        )
+
     def _tick_mouth_thinking(self, now):
         if now < self._thinking_full_until:
             return
@@ -759,6 +772,14 @@ class RobotEmotionController:
         hue = int(MOUTH_LED_SELECTED_HUES.get(mode, MOUTH_LED_DEFAULT_HUE)) % 360
         h = hue / 360.0
         r, g, b = colorsys.hsv_to_rgb(h, 1.0, 1.0)
+        intensity = (
+            MOUTH_LED_STANDBY_INTENSITY
+            if mode == MOUTH_LED_MODE_STANDBY
+            else 1.0
+        )
+        r *= intensity
+        g *= intensity
+        b *= intensity
         return int(r * 255), int(g * 255), int(b * 255)
 
     def _show_mouth_pattern(self, pattern, color):

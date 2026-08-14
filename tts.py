@@ -4,9 +4,14 @@ import hashlib
 import os
 from pathlib import Path
 import re
+import select
 import subprocess
+import sys
+import termios
+import tempfile
 import threading
 import time
+import wave
 
 import numpy as np
 import sounddevice as sd
@@ -37,6 +42,106 @@ def suppress_stderr():
 _stop_model = None
 _stop_mic = None
 _speech_cache = {}
+_evdev_warning_shown = False
+
+
+def _monitor_presentation_skip(stop_event, skip_event, ready_event):
+    """Treat Escape or Space as a skip while preserving terminal state."""
+    if not sys.stdin.isatty():
+        ready_event.set()
+        return
+
+    fd = sys.stdin.fileno()
+    original = None
+    try:
+        original = termios.tcgetattr(fd)
+        settings = termios.tcgetattr(fd)
+        settings[3] &= ~(termios.ICANON | termios.ECHO)
+        settings[6][termios.VMIN] = 0
+        settings[6][termios.VTIME] = 1
+        termios.tcsetattr(fd, termios.TCSANOW, settings)
+        ready_event.set()
+
+        while not stop_event.is_set():
+            readable, _, _ = select.select([fd], [], [], 0.1)
+            if readable:
+                key = os.read(fd, 1)
+                if key in (b"\x1b", b" "):
+                    key_name = "escape" if key == b"\x1b" else "space"
+                    print(f"[presentation] keyboard_skip={key_name}")
+                    skip_event.set()
+                    stop_event.set()
+                    return
+    except (OSError, termios.error) as exc:
+        ready_event.set()
+        print(f"⚠️ Presentation keyboard skip unavailable: {exc}")
+    finally:
+        if original is not None:
+            try:
+                termios.tcsetattr(fd, termios.TCSANOW, original)
+            except (OSError, termios.error):
+                pass
+
+
+def _monitor_external_presentation_skip(stop_event, skip_event, external_event):
+    """Forward a focused slideshow's Escape key event to audio playback."""
+    while not stop_event.is_set():
+        if external_event.wait(timeout=0.1):
+            print("[presentation] keyboard_skip=slideshow")
+            skip_event.set()
+            stop_event.set()
+            return
+
+
+def _monitor_linux_escape(stop_event, skip_event):
+    """Listen for Escape on Pi keyboards regardless of window focus."""
+    global _evdev_warning_shown
+
+    try:
+        from evdev import InputDevice, ecodes, list_devices
+    except ImportError:
+        if not _evdev_warning_shown:
+            print("⚠️ Pi Escape-key listener unavailable: install evdev")
+            _evdev_warning_shown = True
+        return
+
+    devices = []
+    try:
+        for path in list_devices():
+            device = InputDevice(path)
+            key_codes = device.capabilities().get(ecodes.EV_KEY, ())
+            if ecodes.KEY_ESC in key_codes:
+                devices.append(device)
+
+        if not devices:
+            if not _evdev_warning_shown:
+                print(
+                    "⚠️ Pi Escape-key listener found no accessible keyboard; "
+                    "check input-group permissions"
+                )
+                _evdev_warning_shown = True
+            return
+
+        while not stop_event.is_set():
+            readable, _, _ = select.select(devices, [], [], 0.1)
+            for device in readable:
+                for event in device.read():
+                    if (
+                        event.type == ecodes.EV_KEY
+                        and event.code == ecodes.KEY_ESC
+                        and event.value == 1
+                    ):
+                        print("[presentation] keyboard_skip=escape source=linux-input")
+                        skip_event.set()
+                        stop_event.set()
+                        return
+    except (OSError, PermissionError) as exc:
+        if not _evdev_warning_shown:
+            print(f"⚠️ Pi Escape-key listener unavailable: {exc}")
+            _evdev_warning_shown = True
+    finally:
+        for device in devices:
+            device.close()
 
 if ENABLE_MID_RESPONSE_STOP:
     try:
@@ -263,8 +368,9 @@ def _monitor_stop_phrase(stop_event, ready_event=None):
         return
 
 
-def _split_tts_text(text):
-    if len(text) <= TTS_CHUNK_MAX_CHARS:
+def _split_tts_text(text, max_chars=None):
+    max_chars = TTS_CHUNK_MAX_CHARS if max_chars is None else max_chars
+    if len(text) <= max_chars:
         return [text]
 
     pieces = [
@@ -279,7 +385,7 @@ def _split_tts_text(text):
     for piece in pieces:
         if not current:
             current = piece
-        elif len(current) + 1 + len(piece) <= TTS_CHUNK_MAX_CHARS:
+        elif len(current) + 1 + len(piece) <= max_chars:
             current = f"{current} {piece}"
         else:
             chunks.append(current)
@@ -289,6 +395,41 @@ def _split_tts_text(text):
         chunks.append(current)
 
     return chunks or [text]
+
+
+def _split_emphasis_segments(text):
+    """Return clean text segments tagged by exact [Emph] markers."""
+    segments = []
+    position = 0
+    pattern = re.compile(r"\[Emph\](.*?)\[/Emph\]", re.DOTALL)
+
+    for match in pattern.finditer(str(text)):
+        normal = str(text)[position : match.start()].strip()
+        emphasized = match.group(1).strip()
+        if normal:
+            segments.append((normal, False))
+        if emphasized:
+            segments.append((emphasized, True))
+        position = match.end()
+
+    remainder = str(text)[position:].strip()
+    if remainder:
+        segments.append((remainder, False))
+
+    # Never pass unmatched control markers through to speech. Attach trailing
+    # punctuation to the preceding unit so Piper is not asked to speak a WAV
+    # containing only a period or comma.
+    cleaned = []
+    for segment, emphasized in segments or [(str(text), False)]:
+        segment = segment.replace("[Emph]", "").replace("[/Emph]", "").strip()
+        if not segment:
+            continue
+        if cleaned and not re.search(r"\w", segment):
+            previous, previous_emphasis = cleaned[-1]
+            cleaned[-1] = (previous + segment, previous_emphasis)
+        else:
+            cleaned.append((segment, emphasized))
+    return cleaned
 
 
 def _apply_pronunciation_overrides(text):
@@ -307,7 +448,7 @@ def _apply_pronunciation_overrides(text):
     return spoken_text
 
 
-def generate_speech_file(text, output_file="temp.wav"):
+def generate_speech_file(text, output_file="temp.wav", length_scale=None):
     """Generate one Piper WAV, optionally for a reusable personality cache."""
     if state.shutting_down:
         return False
@@ -318,7 +459,7 @@ def generate_speech_file(text, output_file="temp.wav"):
         "--model",
         os.path.expanduser(TTS_MODEL_PATH),
         "--length_scale",
-        str(TTS_LENGTH_SCALE),
+        str(TTS_LENGTH_SCALE if length_scale is None else length_scale),
         "--sentence_silence",
         str(TTS_SENTENCE_SILENCE),
         "--output_file",
@@ -338,6 +479,82 @@ def generate_speech_file(text, output_file="temp.wav"):
         return False
 
     return result.returncode == 0 and os.path.exists(output_file)
+
+
+def _generate_emphasized_speech_file(speech_units, output_file="temp.wav"):
+    """Synthesize marked segments and join them without long boundary gaps."""
+    with tempfile.TemporaryDirectory(prefix="ezra-emphasis-") as directory:
+        rendered = []
+        for index, (text, emphasized) in enumerate(speech_units):
+            path = Path(directory) / f"segment-{index}.wav"
+            length_scale = TTS_LENGTH_SCALE
+            if emphasized:
+                length_scale *= TTS_EMPHASIS_LENGTH_SCALE_MULTIPLIER
+                print(f"[tts] emphasis={text!r}")
+            if not generate_speech_file(text, path, length_scale=length_scale):
+                return False
+            rendered.append(path)
+
+        parameters = None
+        joined_frames = []
+        for index, path in enumerate(rendered):
+            with wave.open(os.fspath(path), "rb") as source:
+                current_parameters = source.getparams()
+                frames = source.readframes(source.getnframes())
+            if parameters is None:
+                parameters = current_parameters
+            elif (
+                current_parameters.nchannels,
+                current_parameters.sampwidth,
+                current_parameters.framerate,
+                current_parameters.comptype,
+            ) != (
+                parameters.nchannels,
+                parameters.sampwidth,
+                parameters.framerate,
+                parameters.comptype,
+            ):
+                return False
+
+            if parameters.sampwidth == 2 and frames:
+                samples = np.frombuffer(frames, dtype="<i2")
+                channels = parameters.nchannels
+                sample_frames = samples.reshape(-1, channels)
+                if speech_units[index][1]:
+                    sample_frames = np.clip(
+                        sample_frames.astype(np.float32) * TTS_EMPHASIS_GAIN,
+                        -32768,
+                        32767,
+                    ).astype("<i2")
+                active = np.flatnonzero(np.max(np.abs(sample_frames), axis=1) > 160)
+                if active.size:
+                    padding = int(parameters.framerate * 0.025)
+                    start = 0 if index == 0 else max(0, int(active[0]) - padding)
+                    end = (
+                        len(sample_frames)
+                        if index == len(rendered) - 1
+                        else min(len(sample_frames), int(active[-1]) + padding + 1)
+                    )
+                    frames = sample_frames[start:end].astype("<i2").tobytes()
+            joined_frames.append(frames)
+            if (
+                index < len(rendered) - 1
+                and speech_units[index][1] != speech_units[index + 1][1]
+            ):
+                silence_frames = round(
+                    parameters.framerate * TTS_EMPHASIS_BOUNDARY_PAUSE_SECONDS
+                )
+                joined_frames.append(
+                    b"\x00"
+                    * silence_frames
+                    * parameters.nchannels
+                    * parameters.sampwidth
+                )
+
+        with wave.open(os.fspath(output_file), "wb") as destination:
+            destination.setparams(parameters)
+            destination.writeframes(b"".join(joined_frames))
+    return True
 
 
 def prepare_speech_cache(texts):
@@ -439,7 +656,7 @@ def _play_speech_file(
         )
 
     print("⚠️ TTS playback failed on all output device attempts")
-    return False
+    return None
 
 
 def speak(
@@ -447,6 +664,10 @@ def speak(
     allow_mid_response_stop=True,
     audio_file=None,
     on_playback_start=None,
+    on_playback_complete=None,
+    allow_keyboard_skip=False,
+    presentation_skip_event=None,
+    chunk_max_chars=None,
 ):
     if state.shutting_down:
         return False
@@ -458,7 +679,13 @@ def speak(
     stop_event = threading.Event()
     ready_event = threading.Event()
     monitor_thread = None
+    keyboard_thread = None
+    external_keyboard_thread = None
+    linux_keyboard_thread = None
+    keyboard_ready = threading.Event()
+    keyboard_skip = threading.Event()
     interrupted_by_stop = False
+    skipped_by_keyboard = False
 
     if (
         ENABLE_MID_RESPONSE_STOP
@@ -472,20 +699,85 @@ def speak(
         )
         monitor_thread.start()
         ready_event.wait(timeout=MID_RESPONSE_STOP_READY_TIMEOUT)
+        print(
+            "[tts] mid_response_stop=enabled "
+            f"threshold={MID_RESPONSE_STOP_GUARD_THRESHOLD:.2f}"
+        )
     elif allow_mid_response_stop:
         _flush_stop_model()
 
+    if allow_keyboard_skip:
+        keyboard_thread = threading.Thread(
+            target=_monitor_presentation_skip,
+            args=(stop_event, keyboard_skip, keyboard_ready),
+            daemon=True,
+        )
+        keyboard_thread.start()
+        keyboard_ready.wait(timeout=0.5)
+        linux_keyboard_thread = threading.Thread(
+            target=_monitor_linux_escape,
+            args=(stop_event, keyboard_skip),
+            daemon=True,
+        )
+        linux_keyboard_thread.start()
+
+    if presentation_skip_event is not None:
+        presentation_skip_event.clear()
+        external_keyboard_thread = threading.Thread(
+            target=_monitor_external_presentation_skip,
+            args=(stop_event, keyboard_skip, presentation_skip_event),
+            daemon=True,
+        )
+        external_keyboard_thread.start()
+
     try:
-        chunks = _split_tts_text(text)
+        speech_units = [
+            (chunk, emphasized)
+            for segment, emphasized in _split_emphasis_segments(text)
+            for chunk in _split_tts_text(segment, max_chars=chunk_max_chars)
+        ]
+        combined_audio_file = None
+        if len(speech_units) > 1 and any(
+            emphasized for _, emphasized in speech_units
+        ):
+            combined_audio_file = "temp.wav"
+            if _generate_emphasized_speech_file(
+                speech_units,
+                combined_audio_file,
+            ):
+                speech_units = [("", False)]
+            else:
+                # Preserve narration even if WAV joining is unavailable.
+                print("⚠️ TTS emphasis joining failed; using segment playback")
+                combined_audio_file = None
         playback_started = False
-        for chunk in chunks:
+        playback_completed = bool(speech_units)
+        for chunk, emphasized in speech_units:
             if stop_event.is_set():
-                interrupted_by_stop = True
+                if keyboard_skip.is_set():
+                    skipped_by_keyboard = True
+                else:
+                    interrupted_by_stop = True
+                    playback_completed = False
                 break
 
-            chunk_audio_file = audio_file if len(chunks) == 1 else None
+            chunk_audio_file = combined_audio_file
             if chunk_audio_file is None:
-                if not generate_speech_file(chunk):
+                chunk_audio_file = (
+                    audio_file
+                    if len(speech_units) == 1 and not emphasized
+                    else None
+                )
+            if chunk_audio_file is None:
+                length_scale = TTS_LENGTH_SCALE
+                if emphasized:
+                    length_scale *= TTS_EMPHASIS_LENGTH_SCALE_MULTIPLIER
+                    print(f"[tts] emphasis={chunk!r}")
+                if not generate_speech_file(
+                    chunk,
+                    length_scale=length_scale,
+                ):
+                    playback_completed = False
                     break
                 chunk_audio_file = "temp.wav"
 
@@ -509,19 +801,37 @@ def speak(
                     print(f"⚠️ TTS playback-start callback failed: {e}")
                 playback_started = True
 
-            if stop_event.is_set() or _play_speech_file(
-                stop_event,
-                mouth_envelope,
-                mouth_frame_seconds,
-                chunk_audio_file,
-            ):
-                interrupted_by_stop = True
+            playback_result = _play_speech_file(
+                stop_event, mouth_envelope, mouth_frame_seconds, chunk_audio_file
+            )
+            if stop_event.is_set() or playback_result is True:
+                if keyboard_skip.is_set():
+                    skipped_by_keyboard = True
+                    playback_completed = True
+                else:
+                    interrupted_by_stop = True
+                    playback_completed = False
                 break
+            if playback_result is not False:
+                playback_completed = False
+                break
+
+        if playback_completed and on_playback_complete is not None:
+            try:
+                on_playback_complete()
+            except Exception as e:
+                print(f"⚠️ TTS playback-complete callback failed: {e}")
     finally:
         stop_event.set()
         set_talk_level(0.0)
         if monitor_thread is not None:
             monitor_thread.join(timeout=0.5)
+        if keyboard_thread is not None:
+            keyboard_thread.join(timeout=0.5)
+        if external_keyboard_thread is not None:
+            external_keyboard_thread.join(timeout=0.5)
+        if linux_keyboard_thread is not None:
+            linux_keyboard_thread.join(timeout=0.5)
         _flush_stop_model()
 
     # Return to wake-word standby.
@@ -530,5 +840,8 @@ def speak(
     if interrupted_by_stop and not state.shutting_down:
         # Confirmation without recursive stop-monitoring.
         speak("Stopped.", allow_mid_response_stop=False)
+
+    if skipped_by_keyboard:
+        print("[presentation] narration_skipped=True")
 
     return interrupted_by_stop

@@ -176,6 +176,7 @@ body.revealed .reveal{{opacity:1;transform:none}}
 const viewport=document.getElementById('viewport');
 function fit(){{const scale=Math.min(innerWidth/{STAGE_WIDTH},innerHeight/{STAGE_HEIGHT});viewport.style.transform=`translate(-50%,-50%) scale(${{scale}})`;}}
 addEventListener('resize',fit);fit();
+addEventListener('keydown',event=>{{if(event.key==='Escape'||event.key===' '){{event.preventDefault();fetch('/skip',{{method:'POST'}}).catch(()=>{{}});}}}});
 let last='';
 async function update(){{try{{const response=await fetch('/state',{{cache:'no-store'}});const state=await response.json();const key=JSON.stringify(state);if(key!==last){{document.querySelectorAll('.slide').forEach((s,i)=>s.classList.toggle('active',i===state.slide));document.body.classList.toggle('revealed',state.revealed);last=key;}}}}catch(e){{}}setTimeout(update,100);}}
 update();
@@ -195,6 +196,7 @@ class BrowserSlideshow:
         self.profile_directory = None
         self.browser_log = None
         self._html = ""
+        self.skip_event = threading.Event()
 
     @staticmethod
     def missing_commands():
@@ -222,6 +224,15 @@ class BrowserSlideshow:
                 self.send_header("Cache-Control", "no-store")
                 self.end_headers()
                 self.wfile.write(content)
+
+            def do_POST(self):
+                if self.path.startswith("/skip"):
+                    slideshow.skip_event.set()
+                    self.send_response(204)
+                    self.end_headers()
+                    return
+                self.send_response(404)
+                self.end_headers()
 
             def log_message(self, *_args):
                 pass
@@ -251,6 +262,12 @@ class BrowserSlideshow:
                 "chromium",
                 "--kiosk",
                 "--ozone-platform=wayland",
+                # Each presentation uses a disposable Chromium profile. Keep
+                # it self-contained so the desktop keyring does not interrupt
+                # kiosk startup with a password-creation dialog.
+                "--password-store=basic",
+                "--no-first-run",
+                "--no-default-browser-check",
                 "--noerrdialogs",
                 "--disable-session-crashed-bubble",
                 f"--user-data-dir={self.profile_directory.name}",
@@ -278,6 +295,10 @@ class BrowserSlideshow:
 
     def previous(self):
         self.slide = max(0, self.slide - 1)
+        self.revealed = False
+
+    def go_to(self, slide_index):
+        self.slide = slide_index
         self.revealed = False
 
     def reveal(self):

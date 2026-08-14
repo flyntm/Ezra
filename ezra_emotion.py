@@ -16,7 +16,8 @@ if ENABLE_FACE_MOTION_DIAGNOSTIC:
     # diagnostic remains mechanically quiet with every mouth LED off.
     robot_emotions.stop(clear_mouth=True, relax_servos=False)
 else:
-    robot_emotions.start(EMOTION_STANDBY)
+    if robot_emotions.start(EMOTION_STANDBY):
+        print("✅ Servo and mouth hardware ready")
 
 
 def set_emotion(emotion):

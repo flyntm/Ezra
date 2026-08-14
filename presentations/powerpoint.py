@@ -10,7 +10,10 @@ import zipfile
 
 
 _DRAWING_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
+_PRESENTATION_NS = "http://schemas.openxmlformats.org/presentationml/2006/main"
 _SLIDE_RE = re.compile(r"^ppt/slides/slide(\d+)\.xml$")
+_NEXT_SLIDE_MARKERS = ("[NEXT SLIDE]", "[Next Slide]")
+_QUESTION_LABEL = re.compile(r"\bQ\s*(\d+)\b", re.IGNORECASE)
 
 
 class PresentationError(RuntimeError):
@@ -23,6 +26,9 @@ class PowerPointDeck:
 
     path: Path
     notes: tuple[str, ...]
+    auto_advance: tuple[bool, ...]
+    reveal_slides: tuple[bool, ...]
+    question_numbers: tuple[int | None, ...]
 
     @property
     def slide_count(self):
@@ -41,8 +47,18 @@ class PowerPointDeck:
                     for name in package.namelist()
                     if (match := _SLIDE_RE.match(name))
                 )
-                notes = tuple(
+                parsed_notes = tuple(
                     _read_note(package, number) for number in slide_numbers
+                )
+                notes = tuple(note for note, _ in parsed_notes)
+                auto_advance = tuple(requested for _, requested in parsed_notes)
+                reveal_slides = tuple(
+                    _has_reveal_content(package, number)
+                    for number in slide_numbers
+                )
+                question_numbers = tuple(
+                    _read_question_number(package, number)
+                    for number in slide_numbers
                 )
         except (zipfile.BadZipFile, ET.ParseError) as exc:
             raise PresentationError(
@@ -51,7 +67,13 @@ class PowerPointDeck:
 
         if not notes:
             raise PresentationError(f"No slides found in: {deck_path}")
-        return cls(deck_path, notes)
+        return cls(
+            deck_path,
+            notes,
+            auto_advance,
+            reveal_slides,
+            question_numbers,
+        )
 
 
 def _read_note(package, slide_number):
@@ -59,9 +81,10 @@ def _read_note(package, slide_number):
     try:
         root = ET.fromstring(package.read(name))
     except KeyError:
-        return ""
+        return "", False
 
     paragraphs = []
+    auto_advance = False
     for paragraph in root.iter(
         "{http://schemas.openxmlformats.org/drawingml/2006/main}p"
     ):
@@ -69,9 +92,37 @@ def _read_note(package, slide_number):
             node.text or ""
             for node in paragraph.iter(f"{{{_DRAWING_NS}}}t")
         ).strip()
+        sources_position = text.casefold().find("[sources]")
+        sources_found = sources_position >= 0
+        if sources_found:
+            text = text[:sources_position].strip()
+        for marker in _NEXT_SLIDE_MARKERS:
+            if marker in text:
+                auto_advance = True
+                text = text.replace(marker, "")
+        text = text.strip()
         if text:
             paragraphs.append(text)
-    return "\n".join(paragraphs)
+        if sources_found:
+            break
+    return "\n".join(paragraphs), auto_advance
+
+
+def _has_reveal_content(package, slide_number):
+    root = ET.fromstring(package.read(f"ppt/slides/slide{slide_number}.xml"))
+    for identity in root.iter(f"{{{_PRESENTATION_NS}}}cNvPr"):
+        if identity.get("name", "").startswith("answer-"):
+            return True
+    return False
+
+
+def _read_question_number(package, slide_number):
+    root = ET.fromstring(package.read(f"ppt/slides/slide{slide_number}.xml"))
+    visible_text = " ".join(
+        node.text or "" for node in root.iter(f"{{{_DRAWING_NS}}}t")
+    )
+    match = _QUESTION_LABEL.search(visible_text)
+    return int(match.group(1)) if match else None
 
 
 class RehearsalSlideshow:
@@ -85,6 +136,9 @@ class RehearsalSlideshow:
 
     def previous(self):
         print("[slides] previous")
+
+    def go_to(self, slide_index):
+        print(f"[slides] show slide {slide_index + 1}")
 
     def reveal(self):
         print("[slides] reveal")

@@ -10,6 +10,7 @@ from .acts_lesson_one import (
     handle_active_command as handle_presentation_command,
     is_rehearsal_request,
     is_start_request as is_presentation_request,
+    requested_start_slide,
     start_presentation,
 )
 
@@ -19,6 +20,7 @@ __all__ = [
     "is_name_origin_request",
     "is_presentation_request",
     "is_rehearsal_request",
+    "requested_start_slide",
     "present_introduction",
     "present_name_origin",
     "start_presentation",
