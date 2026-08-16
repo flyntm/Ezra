@@ -2,6 +2,7 @@
 
 Controls:
     S = smile
+    W = wake-word standby smile
     F = frown
     T = talking animation
     L = listening
@@ -59,13 +60,16 @@ THINK_FULL_PAUSE = ezra_config.MOUTH_LED_THINK_FULL_PAUSE
 MODE_SMILE = ezra_config.MOUTH_LED_MODE_SMILE
 MODE_FROWN = ezra_config.MOUTH_LED_MODE_FROWN
 MODE_TALK = ezra_config.MOUTH_LED_MODE_TALK
+MODE_STANDBY = ezra_config.MOUTH_LED_MODE_STANDBY
 MODE_LISTENING = ezra_config.MOUTH_LED_MODE_LISTENING
 MODE_THINKING = ezra_config.MOUTH_LED_MODE_THINKING
 DEFAULT_HUE = ezra_config.MOUTH_LED_DEFAULT_HUE
+STANDBY_INTENSITY = ezra_config.MOUTH_LED_STANDBY_INTENSITY
 MOUTH_MODES = (
     MODE_SMILE,
     MODE_FROWN,
     MODE_TALK,
+    MODE_STANDBY,
     MODE_LISTENING,
     MODE_THINKING,
 )
@@ -135,6 +139,7 @@ def save_selected_hues():
         f"    MOUTH_LED_MODE_SMILE: {int(selected_hues[MODE_SMILE]) % 360},\n"
         f"    MOUTH_LED_MODE_FROWN: {int(selected_hues[MODE_FROWN]) % 360},\n"
         f"    MOUTH_LED_MODE_TALK: {int(selected_hues[MODE_TALK]) % 360},\n"
+        f"    MOUTH_LED_MODE_STANDBY: {int(selected_hues[MODE_STANDBY]) % 360},\n"
         f"    MOUTH_LED_MODE_LISTENING: {int(selected_hues[MODE_LISTENING]) % 360},\n"
         f"    MOUTH_LED_MODE_THINKING: {int(selected_hues[MODE_THINKING]) % 360},\n"
         "}"
@@ -211,6 +216,25 @@ def smile_pattern():
 
 def smile():
     show_pattern(smile_pattern(), color=expression_color(MODE_SMILE))
+
+
+def standby_pattern():
+    return [
+        [0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 1, 0, 0, 0, 0, 1, 0],
+        [0, 0, 1, 1, 1, 1, 0, 0],
+    ]
+
+
+def standby_color(hue):
+    return tuple(int(channel * STANDBY_INTENSITY) for channel in hue_to_rgb(hue))
+
+
+def standby():
+    show_pattern(
+        standby_pattern(),
+        color=standby_color(selected_hues[MODE_STANDBY]),
+    )
 
 
 def frown_pattern():
@@ -304,6 +328,8 @@ def render_active_expression_preview(hue):
     color = hue_to_rgb(hue)
     if active_mode == MODE_SMILE:
         show_pattern(smile_pattern(), color=color)
+    elif active_mode == MODE_STANDBY:
+        show_pattern(standby_pattern(), color=standby_color(hue))
     elif active_mode == MODE_FROWN:
         show_pattern(frown_pattern(), color=color)
     elif active_mode == MODE_LISTENING:
@@ -317,6 +343,8 @@ def render_active_expression_preview(hue):
 def render_active_expression_selected():
     if active_mode == MODE_SMILE:
         smile()
+    elif active_mode == MODE_STANDBY:
+        standby()
     elif active_mode == MODE_FROWN:
         frown()
     elif active_mode == MODE_LISTENING:
@@ -335,12 +363,13 @@ def main():
 
     print("\n=== Ezra Mouth LED Test (3x8 on D18) ===")
     print("S = smile")
+    print("W = wake-word standby smile")
     print("F = frown")
     print("T = talking animation")
     print("L = listening")
     print("K = thinking")
     print("A = all LEDs, cycle through 8 colors")
-    print("(press S/F/T/L/K first to choose which expression color to edit)")
+    print("(press S/W/F/T/L/K first to choose which expression color to edit)")
     print("Up/Down = browse hue wheel")
     print("Enter = select current hue")
     print("X = off")
@@ -389,6 +418,14 @@ def main():
                 smile()
                 print(
                     f"[mouth_test] Smile (editing hue {pending_hue} deg; Up/Down then Enter)"
+                )
+            elif key in ("w", "W"):
+                active_mode = MODE_STANDBY
+                pending_hue = selected_hues[MODE_STANDBY]
+                standby()
+                print(
+                    "[mouth_test] Wake-word standby smile "
+                    f"(editing hue {pending_hue} deg; Up/Down then Enter)"
                 )
             elif key in ("f", "F"):
                 active_mode = MODE_FROWN

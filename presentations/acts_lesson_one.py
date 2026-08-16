@@ -10,6 +10,7 @@ from config import PRESENTATION_TTS_CHUNK_MAX_CHARS
 
 from .browser_slideshow import BrowserSlideshow
 from .powerpoint import PowerPointDeck, PresentationError, RehearsalSlideshow
+from .presenter import speak_with_head_motion
 
 
 DECK_PATH = Path(__file__).with_name("Lesson_One_Acts.pptx")
@@ -157,8 +158,16 @@ def _parse_slide_number(value):
 class ActsLessonOneSession:
     """A small state machine that keeps slides and narration synchronized."""
 
-    def __init__(self, speak, slideshow=None):
+    def __init__(
+        self,
+        speak,
+        slideshow=None,
+        look_targets=None,
+        center_head=None,
+    ):
         self.speak = speak
+        self.look_targets = look_targets
+        self.center_head = center_head
         self.deck = PowerPointDeck.load(DECK_PATH)
         slides_without_notes = [
             str(number)
@@ -199,9 +208,11 @@ class ActsLessonOneSession:
             print(f"[presentation] slide={slide_number} speech_complete")
             playback_complete.set()
 
-        interrupted = bool(
-            self.speak(
+        try:
+            interrupted = speak_with_head_motion(
+                self.speak,
                 self.deck.notes[self.slide_index],
+                look_targets=self.look_targets,
                 on_playback_start=speech_started,
                 on_playback_complete=speech_completed,
                 allow_keyboard_skip=True,
@@ -210,7 +221,9 @@ class ActsLessonOneSession:
                 ),
                 chunk_max_chars=PRESENTATION_TTS_CHUNK_MAX_CHARS,
             )
-        )
+        finally:
+            if self.center_head is not None:
+                self.center_head()
         if interrupted:
             print(
                 f"[presentation] slide={slide_number} "
@@ -380,7 +393,30 @@ def start_presentation(speak, rehearsal=False, slide_number=1):
         _session.stop()
     backend = RehearsalSlideshow() if rehearsal else None
     rehearsal_speak = _rehearsal_speak if rehearsal else speak
-    _session = ActsLessonOneSession(rehearsal_speak, backend)
+    look_targets = None
+    center_head = None
+    if not rehearsal:
+        # Aim at a varied set of audience positions while each slide's speaker
+        # notes are being read. Default arguments bind each bearing separately.
+        from robot.head_tracking import head_tracker
+
+        audience_bearings = (-48.0, -35.0, -22.0, -10.0, 0.0, 12.0, 25.0, 38.0, 50.0)
+        look_targets = [
+            lambda target=target: head_tracker.turn_toward_bearing(
+                target - head_tracker.current_yaw,
+                source="presentation",
+                step_delay_seconds=0.05,
+                announce=False,
+            )
+            for target in audience_bearings
+        ]
+        center_head = head_tracker.center
+    _session = ActsLessonOneSession(
+        rehearsal_speak,
+        backend,
+        look_targets=look_targets,
+        center_head=center_head,
+    )
     _session.start(slide_number=slide_number)
     if rehearsal:
         while _session.slide_index < _session.deck.slide_count - 1:

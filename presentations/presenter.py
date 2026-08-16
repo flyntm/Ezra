@@ -11,6 +11,7 @@ def speak_with_head_motion(
     look_left=None,
     look_right=None,
     look_targets=None,
+    **speak_kwargs,
 ):
     """Speak a segment while making optional, gentle head turns."""
 
@@ -50,9 +51,16 @@ def speak_with_head_motion(
 
     motion_thread = threading.Thread(target=move_head, daemon=True)
     motion_thread.start()
+    original_playback_start = speak_kwargs.pop("on_playback_start", None)
+
+    def speech_started():
+        playback_started.set()
+        if original_playback_start is not None:
+            original_playback_start()
+
     try:
         interrupted = bool(
-            speak(text, on_playback_start=playback_started.set)
+            speak(text, on_playback_start=speech_started, **speak_kwargs)
         )
     finally:
         stop_motion.set()
