@@ -228,7 +228,12 @@ TTS_EMPHASIS_GAIN = 1.12
 TTS_EMPHASIS_BOUNDARY_PAUSE_SECONDS = 0.40
 
 # Silence Piper adds after sentence-ending punctuation.
-TTS_SENTENCE_SILENCE = 0.8
+TTS_SENTENCE_SILENCE = 1.0
+
+# Add a separate pause after clause-ending colons and semicolons. Colons inside
+# values such as times and ratios are left unchanged.
+TTS_PAUSE_AT_COLONS_AND_SEMICOLONS = True
+TTS_COLON_SEMICOLON_PAUSE_SECONDS = 0.45
 
 # Optional personality comments played while a non-local AI request is pending.
 # Audio is generated once and cached. Pending comments are canceled when work
@@ -253,12 +258,13 @@ TTS_PRONUNCIATION_OVERRIDES = {
 TTS_START_DELAY = 0.05
 
 
-# Split long responses into smaller TTS files so playback starts sooner.
-TTS_CHUNK_MAX_CHARS = 140
-
-# Keep slide narration in one continuous WAV when practical. This avoids the
+# Keep responses in one continuous WAV when practical. This avoids the
 # generation/launch gap between short TTS chunks sounding like a long period.
-PRESENTATION_TTS_CHUNK_MAX_CHARS = 5000
+TTS_CHUNK_MAX_CHARS = 5000
+
+# Retain a named presentation setting for the slide narration call site while
+# using the same smooth speech segmentation everywhere.
+PRESENTATION_TTS_CHUNK_MAX_CHARS = TTS_CHUNK_MAX_CHARS
 
 # Drive mouth shapes from short loudness windows in Piper's generated WAV.
 TTS_MOUTH_SYNC_WINDOW_SECONDS = 0.04

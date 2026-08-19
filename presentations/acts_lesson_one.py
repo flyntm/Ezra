@@ -10,7 +10,7 @@ from config import PRESENTATION_TTS_CHUNK_MAX_CHARS
 
 from .browser_slideshow import BrowserSlideshow
 from .powerpoint import PowerPointDeck, PresentationError, RehearsalSlideshow
-from .presenter import speak_with_head_motion
+from .presenter import audience_look_targets, speak_with_head_motion
 
 
 DECK_PATH = Path(__file__).with_name("Lesson_One_Acts.pptx")
@@ -400,16 +400,7 @@ def start_presentation(speak, rehearsal=False, slide_number=1):
         # notes are being read. Default arguments bind each bearing separately.
         from robot.head_tracking import head_tracker
 
-        audience_bearings = (-48.0, -35.0, -22.0, -10.0, 0.0, 12.0, 25.0, 38.0, 50.0)
-        look_targets = [
-            lambda target=target: head_tracker.turn_toward_bearing(
-                target - head_tracker.current_yaw,
-                source="presentation",
-                step_delay_seconds=0.05,
-                announce=False,
-            )
-            for target in audience_bearings
-        ]
+        look_targets = audience_look_targets(head_tracker)
         center_head = head_tracker.center
     _session = ActsLessonOneSession(
         rehearsal_speak,

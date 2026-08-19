@@ -20,6 +20,10 @@ from presentations import (
     start_presentation,
 )
 from presentations.powerpoint import PresentationError
+from presentations.presenter import (
+    NARROW_AUDIENCE_BEARINGS,
+    audience_look_targets,
+)
 from tts import speak
 from wake_word import reset_idle_timer
 
@@ -224,26 +228,7 @@ def handle_local_command(command):
 
         # Treat these bearings as different people spread across the audience.
         # The presenter shuffles them and varies how long Ezra holds each gaze.
-        audience_bearings = (
-            -48.0,
-            -35.0,
-            -22.0,
-            -10.0,
-            0.0,
-            12.0,
-            25.0,
-            38.0,
-            50.0,
-        )
-        look_targets = [
-            lambda target=target: head_tracker.turn_toward_bearing(
-                target - head_tracker.current_yaw,
-                source="presentation",
-                step_delay_seconds=0.05,
-                announce=False,
-            )
-            for target in audience_bearings
-        ]
+        look_targets = audience_look_targets(head_tracker)
 
         present_introduction(
             speak,
@@ -258,16 +243,10 @@ def handle_local_command(command):
         from ezra_emotion import set_temporary_emotion
         from robot.head_tracking import head_tracker
 
-        audience_bearings = (-35.0, -18.0, 0.0, 18.0, 35.0)
-        look_targets = [
-            lambda target=target: head_tracker.turn_toward_bearing(
-                target - head_tracker.current_yaw,
-                source="presentation",
-                step_delay_seconds=0.05,
-                announce=False,
-            )
-            for target in audience_bearings
-        ]
+        look_targets = audience_look_targets(
+            head_tracker,
+            NARROW_AUDIENCE_BEARINGS,
+        )
 
         present_name_origin(
             speak,

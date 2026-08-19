@@ -4,6 +4,33 @@ import random
 import threading
 import time
 
+WIDE_AUDIENCE_BEARINGS = (
+    -48.0,
+    -35.0,
+    -22.0,
+    -10.0,
+    0.0,
+    12.0,
+    25.0,
+    38.0,
+    50.0,
+)
+NARROW_AUDIENCE_BEARINGS = (-35.0, -18.0, 0.0, 18.0, 35.0)
+
+
+def audience_look_targets(head_tracker, bearings=WIDE_AUDIENCE_BEARINGS):
+    """Build callbacks that turn Ezra toward fixed audience bearings."""
+
+    return [
+        lambda target=target: head_tracker.turn_toward_bearing(
+            target - head_tracker.current_yaw,
+            source="presentation",
+            step_delay_seconds=0.05,
+            announce=False,
+        )
+        for target in bearings
+    ]
+
 
 def speak_with_head_motion(
     speak,

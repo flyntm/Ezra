@@ -432,6 +432,29 @@ def _split_emphasis_segments(text):
     return cleaned
 
 
+def _split_clause_pause_segments(text):
+    """Split prose at colons/semicolons and retain the requested pause."""
+    if not TTS_PAUSE_AT_COLONS_AND_SEMICOLONS:
+        return [(str(text), 0.0)]
+
+    segments = []
+    position = 0
+    for match in re.finditer(r"[:;](?=\s|$)", str(text)):
+        clause = str(text)[position : match.end()].strip()
+        if clause:
+            segments.append((clause, TTS_COLON_SEMICOLON_PAUSE_SECONDS))
+        position = match.end()
+
+    remainder = str(text)[position:].strip()
+    if remainder:
+        segments.append((remainder, 0.0))
+    elif segments:
+        clause, _pause = segments[-1]
+        segments[-1] = (clause, 0.0)
+
+    return segments or [(str(text), 0.0)]
+
+
 def _apply_pronunciation_overrides(text):
     """Apply whole-word, case-insensitive respellings only for Piper input."""
     spoken_text = str(text)
@@ -481,11 +504,11 @@ def generate_speech_file(text, output_file="temp.wav", length_scale=None):
     return result.returncode == 0 and os.path.exists(output_file)
 
 
-def _generate_emphasized_speech_file(speech_units, output_file="temp.wav"):
-    """Synthesize marked segments and join them without long boundary gaps."""
-    with tempfile.TemporaryDirectory(prefix="ezra-emphasis-") as directory:
+def _generate_combined_speech_file(speech_units, output_file="temp.wav"):
+    """Synthesize marked segments and join them with controlled pauses."""
+    with tempfile.TemporaryDirectory(prefix="ezra-speech-") as directory:
         rendered = []
-        for index, (text, emphasized) in enumerate(speech_units):
+        for index, (text, emphasized, _pause_after) in enumerate(speech_units):
             path = Path(directory) / f"segment-{index}.wav"
             length_scale = TTS_LENGTH_SCALE
             if emphasized:
@@ -537,19 +560,21 @@ def _generate_emphasized_speech_file(speech_units, output_file="temp.wav"):
                     )
                     frames = sample_frames[start:end].astype("<i2").tobytes()
             joined_frames.append(frames)
-            if (
-                index < len(rendered) - 1
-                and speech_units[index][1] != speech_units[index + 1][1]
-            ):
-                silence_frames = round(
-                    parameters.framerate * TTS_EMPHASIS_BOUNDARY_PAUSE_SECONDS
-                )
-                joined_frames.append(
-                    b"\x00"
-                    * silence_frames
-                    * parameters.nchannels
-                    * parameters.sampwidth
-                )
+            if index < len(rendered) - 1:
+                pause_seconds = speech_units[index][2]
+                if (
+                    pause_seconds <= 0
+                    and speech_units[index][1] != speech_units[index + 1][1]
+                ):
+                    pause_seconds = TTS_EMPHASIS_BOUNDARY_PAUSE_SECONDS
+                silence_frames = round(parameters.framerate * pause_seconds)
+                if silence_frames:
+                    joined_frames.append(
+                        b"\x00"
+                        * silence_frames
+                        * parameters.nchannels
+                        * parameters.sampwidth
+                    )
 
         with wave.open(os.fspath(output_file), "wb") as destination:
             destination.setparams(parameters)
@@ -731,28 +756,36 @@ def speak(
         external_keyboard_thread.start()
 
     try:
-        speech_units = [
-            (chunk, emphasized)
-            for segment, emphasized in _split_emphasis_segments(text)
-            for chunk in _split_tts_text(segment, max_chars=chunk_max_chars)
-        ]
+        speech_units = []
+        for segment, emphasized in _split_emphasis_segments(text):
+            for clause, pause_after in _split_clause_pause_segments(segment):
+                chunks = _split_tts_text(clause, max_chars=chunk_max_chars)
+                speech_units.extend(
+                    (
+                        chunk,
+                        emphasized,
+                        pause_after if index == len(chunks) - 1 else 0.0,
+                    )
+                    for index, chunk in enumerate(chunks)
+                )
         combined_audio_file = None
         if len(speech_units) > 1 and any(
-            emphasized for _, emphasized in speech_units
+            emphasized or pause_after > 0
+            for _, emphasized, pause_after in speech_units
         ):
             combined_audio_file = "temp.wav"
-            if _generate_emphasized_speech_file(
+            if _generate_combined_speech_file(
                 speech_units,
                 combined_audio_file,
             ):
-                speech_units = [("", False)]
+                speech_units = [("", False, 0.0)]
             else:
                 # Preserve narration even if WAV joining is unavailable.
-                print("⚠️ TTS emphasis joining failed; using segment playback")
+                print("⚠️ TTS audio joining failed; using segment playback")
                 combined_audio_file = None
         playback_started = False
         playback_completed = bool(speech_units)
-        for chunk, emphasized in speech_units:
+        for chunk, emphasized, _pause_after in speech_units:
             if stop_event.is_set():
                 if keyboard_skip.is_set():
                     skipped_by_keyboard = True
