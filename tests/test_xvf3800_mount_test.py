@@ -2,7 +2,7 @@ import json
 
 import numpy as np
 
-from tools.diagnostics.xvf3800_mount_test import (
+from Test_files.diagnostics.xvf3800_mount_test import (
     audio_metrics,
     circular_mean_degrees,
     existing_configuration_sessions,

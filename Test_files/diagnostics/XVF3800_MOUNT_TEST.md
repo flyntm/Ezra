@@ -14,8 +14,8 @@ surface during a session.
 Run from the Ezra project directory:
 
 ```bash
-python tools/diagnostics/xvf3800_mount_test.py uncovered_baseline --distance 1.0
-python tools/diagnostics/xvf3800_mount_test.py foam_mount_v1 --distance 1.0
+python Test_files/diagnostics/xvf3800_mount_test.py uncovered_baseline --distance 1.0
+python Test_files/diagnostics/xvf3800_mount_test.py foam_mount_v1 --distance 1.0
 ```
 
 The program automatically tries the XVF3800's 16 kHz and 48 kHz USB modes,
@@ -25,13 +25,13 @@ testing a particular firmware mode.
 To identify the input-device name or number:
 
 ```bash
-python tools/diagnostics/xvf3800_mount_test.py dummy --list-devices
+python Test_files/diagnostics/xvf3800_mount_test.py dummy --list-devices
 ```
 
 Then pass a device number if the default `ReSpeaker` name does not match:
 
 ```bash
-python tools/diagnostics/xvf3800_mount_test.py uncovered_baseline --device 2
+python Test_files/diagnostics/xvf3800_mount_test.py uncovered_baseline --device 2
 ```
 
 Use `--trial quiet` (or another displayed trial name) to repeat just one test.
