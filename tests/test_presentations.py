@@ -1,4 +1,5 @@
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 from dataclasses import replace
@@ -24,6 +25,7 @@ from presentations.common import (
     present_introduction,
     present_name_origin,
 )
+from presentations.presenter import audience_look_targets, speak_with_head_motion
 
 
 class FakeSlideshow:
@@ -48,6 +50,34 @@ class FakeSlideshow:
     def reveal(self):
         self.actions.append("reveal")
 
+
+class PresenterMotionTests(unittest.TestCase):
+    def test_active_audience_move_stops_before_speech_helper_returns(self):
+        movement_started = threading.Event()
+        movement_stopped = threading.Event()
+
+        class Tracker:
+            current_yaw = 0.0
+
+            def turn_toward_bearing(self, *args, stop_event=None, **kwargs):
+                movement_started.set()
+                stop_event.wait(timeout=1.0)
+                movement_stopped.set()
+                return False
+
+        targets = audience_look_targets(Tracker(), bearings=(30.0,))
+
+        def speak(_text, on_playback_start=None, **_options):
+            on_playback_start()
+            self.assertTrue(movement_started.wait(timeout=1.0))
+            return False
+
+        with patch("presentations.presenter.random.uniform", return_value=0.0):
+            self.assertFalse(
+                speak_with_head_motion(speak, "Test narration", look_targets=targets)
+            )
+
+        self.assertTrue(movement_stopped.is_set())
 
 class PowerPointDeckTests(unittest.TestCase):
     def test_lesson_deck_has_speaker_notes_for_every_slide(self):
@@ -221,6 +251,12 @@ class ActsSessionTests(unittest.TestCase):
         self.assertEqual(self.session.slide_index, 4)
         self.assertIn("Question two", self.spoken[-1])
 
+    def test_start_can_open_without_initial_narration(self):
+        self.assertFalse(self.session.start(narrate=False))
+        self.assertTrue(self.session.active)
+        self.assertEqual(self.slides.actions, ["start"])
+        self.assertEqual(self.spoken, [])
+
     def test_marker_advances_only_after_playback_completion(self):
         self.session.deck = replace(
             self.session.deck,
@@ -229,6 +265,18 @@ class ActsSessionTests(unittest.TestCase):
         self.session.start()
         self.assertEqual(self.session.slide_index, 1)
         self.assertEqual(self.slides.actions, ["start", ("go_to", 1)])
+        self.assertEqual(len(self.spoken), 2)
+        self.assertIn("three decades", self.spoken[-1])
+
+    def test_explain_this_slide_narrates_current_slide(self):
+        self.session.start()
+        acts_lesson_one._session = self.session
+        self.addCleanup(setattr, acts_lesson_one, "_session", None)
+        self.assertTrue(handle_active_command("go to slide two", self.session.speak))
+        self.assertEqual(len(self.spoken), 1)
+        self.assertTrue(
+            handle_active_command("explain this slide", self.session.speak)
+        )
         self.assertEqual(len(self.spoken), 2)
         self.assertIn("three decades", self.spoken[-1])
 
@@ -269,6 +317,35 @@ class ActsSessionTests(unittest.TestCase):
             )
         )
         self.assertEqual(spoken, ["There is no active presentation."])
+
+    def test_explicit_start_request_is_left_for_start_command_handler(self):
+        spoken = []
+        self.assertFalse(
+            handle_active_command(
+                "start the presentation on slide 5",
+                lambda text: spoken.append(text),
+            )
+        )
+        self.assertEqual(spoken, [])
+
+    def test_navigation_command_starts_inactive_presentation_then_runs(self):
+        self.addCleanup(setattr, acts_lesson_one, "_session", None)
+
+        def start_for_test(speak, rehearsal=False, slide_number=1, narrate=True):
+            acts_lesson_one._session = self.session
+            self.session.start(slide_number=slide_number, narrate=narrate)
+
+        with patch.object(
+            acts_lesson_one,
+            "start_presentation",
+            side_effect=start_for_test,
+        ) as start:
+            self.assertTrue(handle_active_command("next slide", self.session.speak))
+
+        start.assert_called_once_with(self.session.speak, narrate=False)
+        self.assertEqual(self.slides.actions, ["start", ("go_to", 1)])
+        self.assertEqual(self.session.slide_index, 1)
+        self.assertEqual(len(self.spoken), 1)
 
     def test_jump_to_slide_does_not_read_script(self):
         self.session.start()
@@ -407,6 +484,18 @@ class ActsSessionTests(unittest.TestCase):
         self.addCleanup(setattr, acts_lesson_one, "_session", None)
         handle_active_command("go to slide three", self.session.speak)
         self.assertTrue(handle_active_command("the answers please", self.session.speak))
+        self.assertEqual(self.slides.actions[-2:], [("go_to", 3), "reveal"])
+        self.assertEqual(self.session.slide_index, 3)
+        self.assertIn("carefully investigated", self.spoken[-1])
+
+    def test_answer_is_please_transcription_reveals_and_reads(self):
+        self.session.start()
+        acts_lesson_one._session = self.session
+        self.addCleanup(setattr, acts_lesson_one, "_session", None)
+        handle_active_command("go to slide three", self.session.speak)
+        self.assertTrue(
+            handle_active_command("the answer is please", self.session.speak)
+        )
         self.assertEqual(self.slides.actions[-2:], [("go_to", 3), "reveal"])
         self.assertEqual(self.session.slide_index, 3)
         self.assertIn("carefully investigated", self.spoken[-1])

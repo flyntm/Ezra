@@ -586,8 +586,10 @@ HEAD_TRACKING_MIN_CONTINUOUS_SPEECH_SECONDS = 0.2
 HEAD_TRACKING_MIN_ACTIVE_AUDIO_SECONDS = 0.4
 HEAD_TRACKING_AVERAGE_SECONDS = 0.25
 
-HEAD_TRACKING_STEP_DEGREES = 2.0
-HEAD_TRACKING_STEP_DELAY_SECONDS = 0.035
+# Head movement speed everywhere. Higher values move more slowly; lower values
+# move more quickly. Motion is internally divided into small, smooth steps.
+# 0.1 is the original speed; 0.2 takes approximately twice as long.
+HEAD_MOVEMENT_STEP_DELAY_SECONDS = 0.2
 
 
 # =========================

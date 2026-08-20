@@ -16,7 +16,7 @@ command immediately after the wake phrase or wait for Ezra to begin listening.
 | "Reveal the answer" / "Show us the answers" | Reveals and speaks the response for the discussion slide. |
 | "Display the answers" | Reveals the response without reading its script. |
 | "Go to slide 4" / "Go to slide number four" | Jumps directly to a numbered slide without reading its script. Numbers 1–100 may be digits or words. |
-| "Please tell us about this slide" | Reads the script for the currently displayed slide. |
+| "Please tell us about this slide" / "Explain this slide" | Reads the script for the currently displayed slide. |
 | "Stop the presentation" | Closes the active slideshow. |
 | "Rehearse the presentation" | Prints a full rehearsal without opening slides or using TTS. |
 | "Quit," "exit," or "stop" | Exits the Ezra program. |

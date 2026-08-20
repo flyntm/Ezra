@@ -11,7 +11,7 @@ INTRODUCTION_OPENING = (
     "I'm powered by a Raspberry Pi with 8 gigabytes of memory and a "
     "128-gigabyte S.D. card for storage. I connect to the internet through "
     "Wi-Fi, and the software that brings me to life is written in Python with "
-    "more than 5,000 lines of code. I can listen, think, speak, show emotion, and"
+    "more than 10,000 lines of code. I can listen, think, speak, show emotion, and"
     "answer with HOPEFULLY useful responses. And it all fits inside "
     "this compact system which, let's be honest, looks very GOOFY!"
 )

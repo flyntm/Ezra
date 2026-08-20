@@ -15,7 +15,7 @@ fi
 
 milestone_tag=$(printf '%s' "$milestone" \
   | tr '[:space:]' '-' \
-  | sed 's/[^A-Za-z0-9._-]/-/g; s/-\{2,\}/-/g; s/^-//; s/-$//')
+  | sed 's/[^A-Za-z0-9._-]/-/g; s/-\{2,\}/-/g; s/^[.-]*//; s/[.-]*$//')
 
 if [ -z "$milestone_tag" ] || ! git check-ref-format "refs/tags/$milestone_tag"; then
   echo "❌ That milestone name cannot be converted into a valid Git tag."

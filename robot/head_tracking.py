@@ -1,6 +1,7 @@
 """ReSpeaker direction-of-arrival tracking for Ezra's head servo."""
 
 import math
+import threading
 import time
 
 from config import (
@@ -13,13 +14,20 @@ from config import (
     HEAD_TRACKING_MIN_CONTINUOUS_SPEECH_SECONDS,
     HEAD_TRACKING_MIN_SPEECH_SECONDS,
     HEAD_TRACKING_SAMPLE_INTERVAL_SECONDS,
-    HEAD_TRACKING_STEP_DELAY_SECONDS,
-    HEAD_TRACKING_STEP_DEGREES,
+    HEAD_MOVEMENT_STEP_DELAY_SECONDS,
     LISTEN_ACTIVE_RMS_THRESHOLD,
     VERBOSE_RUNTIME_LOGS,
 )
 from robot import calibration, servos
 from robot.constants import CH_HEAD_TURN
+
+
+# The public setting retains its original meaning: the time Ezra would take
+# between 5-degree motion increments.  Internally, use much smaller increments
+# so slower settings do not turn into visible 5-degree jumps.
+_HEAD_MOVEMENT_SPEED_REFERENCE_DEGREES = 5.0
+_HEAD_MOVEMENT_MAX_STEP_DEGREES = 1.0
+_HEAD_MOVEMENT_UPDATE_INTERVAL_SECONDS = 0.02
 
 
 def _clamp(value, low, high):
@@ -45,6 +53,10 @@ class HeadTracker:
     def __init__(self):
         self._head_cal = calibration.load_cal()["head"]
         self._current_yaw = 0.0
+        # Presentation movement runs in a background thread. Serialize every
+        # head command so centering, speaker tracking, and audience motion can
+        # never issue competing servo positions.
+        self._motion_lock = threading.RLock()
         self.reset_utterance()
 
     def reset_utterance(self):
@@ -140,6 +152,7 @@ class HeadTracker:
         source="command",
         step_delay_seconds=None,
         announce=True,
+        stop_event=None,
     ):
         """Apply an already normalized bearing as a relative correction."""
         return self._turn_by_correction(
@@ -147,6 +160,7 @@ class HeadTracker:
             source=source,
             step_delay_seconds=step_delay_seconds,
             announce=announce,
+            stop_event=stop_event,
         )
 
     def _turn_by_correction(
@@ -155,6 +169,7 @@ class HeadTracker:
         source,
         step_delay_seconds=None,
         announce=True,
+        stop_event=None,
     ):
         announce = announce and VERBOSE_RUNTIME_LOGS
         if abs(correction) <= HEAD_TRACKING_CENTER_DEADBAND_DEGREES:
@@ -188,11 +203,11 @@ class HeadTracker:
                 f"👂 Turning toward {source}: {self._current_yaw:+.1f}° "
                 f"→ {target_yaw:+.1f}°"
             )
-        self._move_smooth(
+        return self._move_smooth(
             target_yaw,
             step_delay_seconds=step_delay_seconds,
+            stop_event=stop_event,
         )
-        return True
 
     def center(self):
         """Return the head to its calibrated center when servos are available."""
@@ -219,26 +234,52 @@ class HeadTracker:
 
         return center + ((endpoint - center) * fraction)
 
-    def _move_smooth(self, target_yaw, step_delay_seconds=None):
-        target_yaw = _clamp(
-            target_yaw,
-            -HEAD_TRACKING_MAX_YAW_DEGREES,
-            HEAD_TRACKING_MAX_YAW_DEGREES,
-        )
-        distance = target_yaw - self._current_yaw
-        steps = max(1, math.ceil(abs(distance) / HEAD_TRACKING_STEP_DEGREES))
-        step_delay = (
-            HEAD_TRACKING_STEP_DELAY_SECONDS
-            if step_delay_seconds is None
-            else max(0.0, float(step_delay_seconds))
-        )
+    def _move_smooth(self, target_yaw, step_delay_seconds=None, stop_event=None):
+        with self._motion_lock:
+            target_yaw = _clamp(
+                target_yaw,
+                -HEAD_TRACKING_MAX_YAW_DEGREES,
+                HEAD_TRACKING_MAX_YAW_DEGREES,
+            )
+            start_yaw = self._current_yaw
+            distance = target_yaw - start_yaw
+            speed_setting = (
+                HEAD_MOVEMENT_STEP_DELAY_SECONDS
+                if step_delay_seconds is None
+                else max(0.0, float(step_delay_seconds))
+            )
+            duration = (
+                abs(distance)
+                * speed_setting
+                / _HEAD_MOVEMENT_SPEED_REFERENCE_DEGREES
+            )
+            steps = max(
+                1,
+                math.ceil(abs(distance) / _HEAD_MOVEMENT_MAX_STEP_DEGREES),
+                math.ceil(duration / _HEAD_MOVEMENT_UPDATE_INTERVAL_SECONDS),
+            )
+            step_delay = duration / steps
 
-        for step in range(1, steps + 1):
-            yaw = self._current_yaw + distance * (step / steps)
-            servos.set_servo_angle(CH_HEAD_TURN, self._yaw_to_servo(yaw))
-            time.sleep(step_delay)
+            for step in range(1, steps + 1):
+                if stop_event is not None and stop_event.is_set():
+                    return False
 
-        self._current_yaw = target_yaw
+                progress = step / steps
+                # Cosine easing reduces the abrupt acceleration and braking
+                # that made occasional wide audience moves look like snaps.
+                eased_progress = 0.5 - (0.5 * math.cos(math.pi * progress))
+                yaw = start_yaw + distance * eased_progress
+                servos.set_servo_angle(CH_HEAD_TURN, self._yaw_to_servo(yaw))
+                self._current_yaw = yaw
+
+                if stop_event is not None:
+                    if stop_event.wait(step_delay):
+                        return False
+                else:
+                    time.sleep(step_delay)
+
+            self._current_yaw = target_yaw
+            return True
 
 
 head_tracker = HeadTracker()

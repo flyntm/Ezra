@@ -21,11 +21,11 @@ def audience_look_targets(head_tracker, bearings=WIDE_AUDIENCE_BEARINGS):
     """Build callbacks that turn Ezra toward fixed audience bearings."""
 
     return [
-        lambda target=target: head_tracker.turn_toward_bearing(
+        lambda stop_event=None, target=target: head_tracker.turn_toward_bearing(
             target - head_tracker.current_yaw,
             source="presentation",
-            step_delay_seconds=0.05,
             announce=False,
+            stop_event=stop_event,
         )
         for target in bearings
     ]
@@ -45,16 +45,24 @@ def speak_with_head_motion(
     playback_started = threading.Event()
 
     def move_head():
-        if not playback_started.wait(timeout=30.0):
-            return
+        playback_deadline = time.monotonic() + 30.0
+        while not playback_started.wait(timeout=0.1):
+            if stop_motion.is_set() or time.monotonic() >= playback_deadline:
+                return
         if stop_motion.wait(
             random.uniform(*PRESENTATION_HEAD_INITIAL_LOOK_DELAY_SECONDS)
         ):
             return
 
-        movements = [move for move in (look_targets or ()) if move is not None]
+        movements = [
+            (move, True) for move in (look_targets or ()) if move is not None
+        ]
         if not movements:
-            movements = [move for move in (look_left, look_right) if move is not None]
+            movements = [
+                (move, False)
+                for move in (look_left, look_right)
+                if move is not None
+            ]
         if not movements:
             return
 
@@ -69,11 +77,14 @@ def speak_with_head_motion(
                     movements[swap_index],
                     movements[0],
                 )
-            for movement in movements:
+            for movement, accepts_stop_event in movements:
                 if stop_motion.is_set():
                     return
-                movement()
-                previous_movement = movement
+                if accepts_stop_event:
+                    movement(stop_motion)
+                else:
+                    movement()
+                previous_movement = (movement, accepts_stop_event)
                 if stop_motion.wait(
                     random.uniform(*PRESENTATION_HEAD_LOOK_INTERVAL_SECONDS)
                 ):
@@ -94,7 +105,9 @@ def speak_with_head_motion(
         )
     finally:
         stop_motion.set()
-        motion_thread.join(timeout=0.5)
+        # Audience moves observe stop_motion at every servo step, so this join
+        # completes promptly and guarantees callers can safely center the head.
+        motion_thread.join()
 
     return interrupted
 

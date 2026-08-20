@@ -44,14 +44,17 @@ _PREVIOUS_PATTERN = re.compile(
 )
 _REVEAL_PATTERN = re.compile(
     r"\b(?:reveal|show)\b.*\b(?:answers?|responses?)\b"
-    r"|\bthe\s+answers\s+please\b",
+    r"|\bthe\s+answers?\s+(?:is\s+)?please\b",
     re.IGNORECASE,
 )
 _DISPLAY_ANSWERS_PATTERN = re.compile(
     r"\bdisplay\b.*\b(?:answers?|responses?)\b", re.IGNORECASE
 )
 _NARRATE_PATTERN = re.compile(
-    r"\b(?:please\s+)?tell\s+(?:us|me)\s+about\s+(?:this|the)\s+slide\b",
+    r"\b(?:please\s+)?(?:"
+    r"tell\s+(?:us|me)\s+about\s+(?:this|the)\s+slide"
+    r"|explain\s+(?:this|the)\s+slide"
+    r")\b",
     re.IGNORECASE,
 )
 _EXPLAIN_SUFFIX_PATTERN = re.compile(
@@ -201,12 +204,14 @@ class ActsLessonOneSession:
         self.answer_revealed = False
         self.active = False
 
-    def start(self, slide_number=1):
+    def start(self, slide_number=1, narrate=True):
         self.slideshow.start()
         self.active = True
         if slide_number != 1:
             self.go_to(slide_number)
-        return self._speak_current()
+        if narrate:
+            return self._speak_current()
+        return False
 
     def _speak_current(self):
         slide_number = self.slide_index + 1
@@ -404,7 +409,7 @@ def has_active_presentation():
     return _session is not None and _session.active
 
 
-def start_presentation(speak, rehearsal=False, slide_number=1):
+def start_presentation(speak, rehearsal=False, slide_number=1, narrate=True):
     global _session
     if has_active_presentation():
         _session.stop()
@@ -425,7 +430,7 @@ def start_presentation(speak, rehearsal=False, slide_number=1):
         look_targets=look_targets,
         center_head=center_head,
     )
-    _session.start(slide_number=slide_number)
+    _session.start(slide_number=slide_number, narrate=narrate)
     if rehearsal:
         while _session.slide_index < _session.deck.slide_count - 1:
             _session.next()
@@ -436,6 +441,11 @@ def start_presentation(speak, rehearsal=False, slide_number=1):
 
 def handle_active_command(command, speak):
     global _session
+    # Let the dedicated start-request path choose the requested opening slide
+    # and narrate it. A phrase such as "start presentation on slide 5" also
+    # resembles a slide-jump command and must not be claimed here.
+    if is_start_request(command):
+        return False
     explain = bool(_EXPLAIN_SUFFIX_PATTERN.search(command))
     navigation_command = _EXPLAIN_SUFFIX_PATTERN.sub("", command)
     jump_match = _SLIDE_JUMP_PATTERN.search(navigation_command)
@@ -453,8 +463,17 @@ def handle_active_command(command, speak):
     ):
         return False
     if not has_active_presentation():
-        speak("There is no active presentation.")
-        return True
+        if _STOP_PATTERN.search(navigation_command):
+            speak("There is no active presentation.")
+            return True
+        try:
+            # Open the deck without reading slide 1, then carry out the command
+            # that caused the automatic start. Commands that request narration
+            # will speak only the slide they ultimately select.
+            start_presentation(speak, narrate=False)
+        except PresentationError as exc:
+            speak(f"I couldn't start the presentation. {exc}")
+            return True
     # A persistent Bible passage may currently cover the slideshow. Any
     # recognized presentation command brings the active deck back to front.
     close_bible_display()

@@ -242,8 +242,10 @@ def main():
     prepare_thinking_comments()
     prepare_speech_cache(WAKE_ONLY_RESPONSES)
 
-    internet_status = "online" if state.internet_connected else "offline"
-    speak(f"Internet status: {internet_status}.")
+    # An online connection is the normal case and needs no spoken startup
+    # announcement. Warn the audience only when Ezra must run offline.
+    if not state.internet_connected:
+        speak("Internet status: offline.")
 
     if not internet_access_allowed():
         try:
