@@ -20,6 +20,7 @@ import sounddevice as sd
 from config import *
 from ezra_emotion import set_emotion, set_talk_level
 from mouth_sync import build_mouth_envelope
+from persistent_piper import PersistentPiper
 from respeaker_io import create_respeaker_or_raise
 import state
 from command_timing import (
@@ -49,6 +50,7 @@ _stop_model = None
 _stop_mic = None
 _speech_cache = {}
 _evdev_warning_shown = False
+_persistent_piper = PersistentPiper(PIPER_PATH, TTS_MODEL_PATH)
 
 
 def _monitor_presentation_skip(
@@ -537,18 +539,35 @@ def generate_speech_file(
         return False
 
     text = _apply_pronunciation_overrides(text)
+    selected_length_scale = (
+        TTS_LENGTH_SCALE if length_scale is None else length_scale
+    )
+    selected_sentence_silence = (
+        TTS_SENTENCE_SILENCE
+        if sentence_silence is None
+        else sentence_silence
+    )
+    if ENABLE_PERSISTENT_PIPER:
+        try:
+            if _persistent_piper.synthesize(
+                text,
+                output_file,
+                selected_length_scale,
+                selected_sentence_silence,
+            ):
+                return True
+            print("⚠️ Persistent Piper unavailable; using one-shot synthesis")
+        except Exception as exc:
+            print(f"⚠️ Persistent Piper failed; using one-shot synthesis: {exc}")
+
     cmd = [
         os.path.expanduser(PIPER_PATH),
         "--model",
         os.path.expanduser(TTS_MODEL_PATH),
         "--length_scale",
-        str(TTS_LENGTH_SCALE if length_scale is None else length_scale),
+        str(selected_length_scale),
         "--sentence_silence",
-        str(
-            TTS_SENTENCE_SILENCE
-            if sentence_silence is None
-            else sentence_silence
-        ),
+        str(selected_sentence_silence),
         "--output_file",
         os.fspath(output_file),
     ]

@@ -13,9 +13,11 @@ from config import (
     VERBOSE_RUNTIME_LOGS,
     WHISPER_BEAM_SIZE,
     WHISPER_COMPUTE_TYPE,
+    WHISPER_CPU_THREADS,
     WHISPER_DEVICE,
     WHISPER_LANGUAGE,
     WHISPER_MODEL,
+    WHISPER_NUM_WORKERS,
 )
 
 
@@ -76,6 +78,8 @@ with suppress_stderr():
         WHISPER_MODEL,
         device=WHISPER_DEVICE,
         compute_type=WHISPER_COMPUTE_TYPE,
+        cpu_threads=WHISPER_CPU_THREADS,
+        num_workers=WHISPER_NUM_WORKERS,
     )
 
 # --------------------------------------------------

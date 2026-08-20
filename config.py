@@ -12,7 +12,7 @@ VERBOSE_RUNTIME_LOGS = False
 ENABLE_PLAYBACK_DIAGNOSTICS = False
 
 # Print a stage-by-stage latency summary after each completed command.
-ENABLE_COMMAND_TIMING_DIAGNOSTIC = True
+ENABLE_COMMAND_TIMING_DIAGNOSTIC = False
 
 # Item test 1: report the wake/utterance direction without running speech-to-text,
 # command handling, AI response, TTS, or head movement. Set to False to restore
@@ -210,6 +210,12 @@ WHISPER_DEVICE = "cpu"
 # Compute precision
 WHISPER_COMPUTE_TYPE = "int8"
 
+# Two inference threads benchmark faster than automatic/four-thread execution
+# on this four-core Pi. Ezra transcribes one command at a time, so one worker
+# avoids throughput-oriented overhead without changing decoding behavior.
+WHISPER_CPU_THREADS = 2
+WHISPER_NUM_WORKERS = 1
+
 # Beam search size (higher = more accurate, slower)
 WHISPER_BEAM_SIZE = 2
 
@@ -223,6 +229,10 @@ WHISPER_LANGUAGE = "en"
 
 # Path to Piper executable
 PIPER_PATH = "~/projects/piper_tts/piper"
+
+# Keep Piper and its voice model loaded between utterances. The existing
+# one-shot CLI remains available as an automatic fallback.
+ENABLE_PERSISTENT_PIPER = True
 
 # Path to voice model
 TTS_MODEL_PATH = "/home/flyntm/projects/ezra/voices/en_US-bryce-medium.onnx"
@@ -272,15 +282,15 @@ TTS_EXPLICIT_PAUSE_SECONDS = 1.5
 TTS_PAUSE_AT_COLONS_AND_SEMICOLONS = True
 TTS_COLON_SEMICOLON_PAUSE_SECONDS = 0.45
 
-# Optional personality comments played while a non-local AI request is pending.
-# Audio is generated once and cached. Pending comments are canceled when work
-# finishes, but a comment that has started is allowed to finish naturally.
+# Optional short personality comments played while a non-local AI request is
+# pending. Audio is generated once and cached. A comment is stopped as soon as
+# the real answer is ready so filler never delays the response.
 ENABLE_THINKING_COMMENTS = True
 THINKING_COMMENT_DELAY_SECONDS = 0.45
 THINKING_COMMENTS = (
-    "Let me see what I can find.",
-    "I'll need to think about that.",
-    "Hmm, let me give that some thought.",
+    "One moment.",
+    "Let me think.",
+    "Checking.",
     "Give me a second.",
 )
 
@@ -405,6 +415,10 @@ AI_PROVIDER = "openai"
 # OpenAI model
 OPENAI_MODEL = "gpt-4.1-mini"
 
+# Speak complete sentences as the cloud response arrives instead of waiting for
+# the entire answer. Local/offline responses retain the non-streaming path.
+ENABLE_AI_RESPONSE_STREAMING = True
+
 # Local llama.cpp server settings. The server is deliberately bound to the Pi's
 # loopback interface so it is unavailable to other devices on the network.
 LOCAL_AI_BASE_URL = "http://127.0.0.1:8081/v1"
@@ -514,8 +528,8 @@ CONTINUOUS_CAPTURE_AFTER_WAKE = True
 WAKE_COMMAND_TIMEOUT = 3.0
 WAKE_MAX_COMMAND_TIME = 10.0
 WAKE_ACTIVE_RMS_THRESHOLD = 0.0055
-WAKE_END_SILENCE = 0.95
-WAKE_END_POST_ROLL_SECONDS = 0.60
+WAKE_END_SILENCE = 0.75
+WAKE_END_POST_ROLL_SECONDS = 0.35
 SEED_ACTIVITY_WINDOW_SECONDS = 0.35
 
 POST_WAKE_AUDIO_SECONDS_EZRA = 1.10

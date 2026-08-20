@@ -193,6 +193,8 @@ last_activity_time = time.time()
 _last_command_doa = None
 _last_command_doa_diagnostic = None
 _last_wake_detected_at = None
+_last_command_speech_ended_at = None
+_last_command_capture_finished_at = None
 
 
 def get_last_command_doa():
@@ -208,6 +210,14 @@ def get_last_command_doa_diagnostic():
 def get_last_wake_detected_at():
     """Return the monotonic time of the most recent wake-model detection."""
     return _last_wake_detected_at
+
+
+def get_last_command_capture_timing():
+    """Return monotonic speech-end and recording-complete timestamps."""
+    return {
+        "speech_ended_at": _last_command_speech_ended_at,
+        "capture_finished_at": _last_command_capture_finished_at,
+    }
 
 
 def _mean_signed_doa(raw_angles):
@@ -559,6 +569,10 @@ def run(return_audio=False):
     global audio_buffer_len, recent_buffer_len
     global mic
     global _last_wake_detected_at
+    global _last_command_speech_ended_at, _last_command_capture_finished_at
+
+    _last_command_speech_ended_at = None
+    _last_command_capture_finished_at = None
 
     # Reset all detection state each time Wake is entered.
     #
@@ -635,8 +649,17 @@ def run(return_audio=False):
         """
 
         global _last_command_doa, _last_command_doa_diagnostic
+        global _last_command_speech_ended_at, _last_command_capture_finished_at
         _last_command_doa = None
         _last_command_doa_diagnostic = None
+
+        def finish_capture(result, speech_ended_at=None):
+            global _last_command_speech_ended_at
+            global _last_command_capture_finished_at
+            if speech_ended_at is not None:
+                _last_command_speech_ended_at = speech_ended_at
+            _last_command_capture_finished_at = time.monotonic()
+            return result
 
         frames = []
         # Wake and command are one continuous interaction from the same speaker.
@@ -708,10 +731,12 @@ def run(return_audio=False):
 
         last_idx = recent_buffer_idx
         last_active_time = None
+        last_active_monotonic = None
         start_time = time.time()
 
         if seed_tail_rms >= ACTIVE_RMS_THRESHOLD:
             last_active_time = start_time
+            last_active_monotonic = time.monotonic()
             if VERBOSE_RUNTIME_LOGS:
                 print(f"🎤 Seed tail active (rms={seed_tail_rms:.4f})")
 
@@ -753,6 +778,7 @@ def run(return_audio=False):
                     if VERBOSE_RUNTIME_LOGS:
                         print("🎤 Command speech detected")
                 last_active_time = now
+                last_active_monotonic = time.monotonic()
             elif last_active_time is None:
                 # No speech seen yet — wait up to COMMAND_TIMEOUT.
                 if now - start_time >= COMMAND_TIMEOUT:
@@ -761,11 +787,15 @@ def run(return_audio=False):
                             "⚠️ No post-wake speech detected within timeout — "
                             "using wake handoff audio"
                         )
+                        result = finish_capture(
+                            seed_arr.astype(np.float32, copy=False),
+                            last_active_monotonic,
+                        )
                         finish_command_direction()
-                        return seed_arr.astype(np.float32, copy=False)
+                        return result
 
                     print("⚠️ No command speech detected within timeout")
-                    return None
+                    return finish_capture(None, last_active_monotonic)
             elif now - last_active_time >= END_SILENCE:
                 post_roll_until = now + END_POST_ROLL_SECONDS
 
@@ -791,14 +821,19 @@ def run(return_audio=False):
                     "⚠️ Maximum command time reached — "
                     "discarding timed-out audio"
                 )
+                result = finish_capture(None, last_active_monotonic)
                 finish_command_direction()
-                return None
+                return result
 
         if not frames:
-            return None
+            return finish_capture(None, last_active_monotonic)
 
+        result = finish_capture(
+            np.concatenate(frames, axis=0).astype(np.float32, copy=False),
+            last_active_monotonic,
+        )
         finish_command_direction()
-        return np.concatenate(frames, axis=0).astype(np.float32, copy=False)
+        return result
 
     if ENABLE_SOUND_GAZE and not ENABLE_FACE_MOTION_DIAGNOSTIC:
         if SOUND_GAZE_TEST_MODE:

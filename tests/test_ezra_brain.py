@@ -1,6 +1,7 @@
 import os
 import unittest
 from unittest.mock import Mock, patch
+from types import SimpleNamespace
 
 import ezra_brain
 
@@ -56,6 +57,82 @@ class EzraBrainTests(unittest.TestCase):
         )
 
         self.assertEqual(result, {"emotion": "happy", "response": "Hello!"})
+
+    def test_streaming_json_delivers_complete_sentences(self):
+        deltas = (
+            '{"emotion":"happy","res',
+            'ponse":"First sentence. Sec',
+            'ond sentence!"}',
+        )
+
+        class FakeStream:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def __iter__(self):
+                return iter(
+                    SimpleNamespace(
+                        type="response.output_text.delta",
+                        delta=delta,
+                    )
+                    for delta in deltas
+                )
+
+        client = Mock()
+        client.responses.stream.return_value = FakeStream()
+        spoken = []
+        with patch(
+            "ezra_brain.internet_access_allowed", return_value=True
+        ), patch("ezra_brain._get_openai_client", return_value=client):
+            result = ezra_brain.ask_ezra(
+                "Test streaming",
+                on_sentence=lambda sentence: spoken.append(sentence) or False,
+            )
+
+        self.assertEqual(spoken, ["First sentence.", "Second sentence!"])
+        self.assertEqual(result["response"], "First sentence. Second sentence!")
+        self.assertEqual(result["emotion"], "happy")
+        self.assertTrue(result["streamed"])
+
+    def test_streaming_json_decodes_escaped_text(self):
+        extractor = ezra_brain._StreamingResponseText()
+        decoded = extractor.feed(
+            '{"emotion":"neutral","response":"He said \\"hello\\". Line\\n2."}'
+        )
+        self.assertEqual(decoded, 'He said "hello". Line\n2.')
+
+    def test_streaming_batches_first_sentence_then_remainder(self):
+        events = [
+            SimpleNamespace(
+                type="response.output_text.delta",
+                delta=(
+                    '{"emotion":"neutral","response":"First. Second. Third."}'
+                ),
+            )
+        ]
+
+        class FakeStream:
+            def __enter__(self):
+                return iter(events)
+
+            def __exit__(self, *_args):
+                return False
+
+        client = Mock()
+        client.responses.stream.return_value = FakeStream()
+        spoken = []
+        with patch(
+            "ezra_brain.internet_access_allowed", return_value=True
+        ), patch("ezra_brain._get_openai_client", return_value=client):
+            ezra_brain.ask_ezra(
+                "Test batching",
+                on_sentence=lambda text: spoken.append(text) or False,
+            )
+
+        self.assertEqual(spoken, ["First.", "Second. Third."])
 
     def test_invalid_provider_is_rejected(self):
         with patch.dict(os.environ, {"EZRA_AI_PROVIDER": "unknown"}):

@@ -1,8 +1,10 @@
 import random
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
+from pathlib import Path
 
 import state
 
@@ -30,11 +32,12 @@ from network_status import internet_access_allowed
 from network_status import start_connectivity_monitor, stop_connectivity_monitor
 from stt import transcribe
 from thinking_comments import prepare_thinking_comments, start_comment
-from tts import prepare_speech_cache, speak, speak_cached
+from tts import generate_speech_file, prepare_speech_cache, speak, speak_cached
 from wake_word import (
     CONTINUOUS_CAPTURE_AFTER_WAKE,
     get_last_command_doa as get_last_continuous_command_doa,
     get_last_command_doa_diagnostic,
+    get_last_command_capture_timing,
     get_last_wake_detected_at,
     reset_idle_timer,
     wait_for_wake_word_with_audio,
@@ -88,6 +91,10 @@ def acknowledge_wake_word(
 
         set_emotion(EMOTION_THINKING)
         if command_timing is not None:
+            # The separate follow-up listener does not yet expose its final
+            # active-audio timestamp; do not reuse the initial wake capture's
+            # speech-end mark for this later recording.
+            command_timing.marks.pop("command_speech_ended", None)
             command_timing.mark("command_capture_finished")
             command_timing.mark("stt_started")
         text = transcribe(audio)
@@ -137,22 +144,15 @@ def acknowledge_wake_word(
 
 
 def stop_thinking_comment(cancel_event, comment_thread):
-    """Cancel a pending comment, but allow a started comment to finish."""
+    """Stop a pending or playing comment before the real response."""
     if cancel_event is None:
         return
 
-    if comment_thread is not None and comment_thread.comment_started_event.is_set():
-        # Once Ezra starts a sentence, finishing it sounds more natural than
-        # cutting it off when transcription or the AI response completes.
-        comment_thread.join(timeout=10.0)
-        if not comment_thread.is_alive():
-            return
-
-        print("⚠️ Thinking comment timed out; stopping playback")
-
     cancel_event.set()
     if comment_thread is not None:
-        comment_thread.join(timeout=0.30)
+        comment_thread.join(timeout=0.50)
+        if comment_thread.is_alive():
+            print("⚠️ Thinking comment did not stop promptly")
 
 
 def finish_command_timing(command_timing, outcome="complete"):
@@ -266,7 +266,14 @@ def main():
             if ENABLE_COMMAND_TIMING_DIAGNOSTIC:
                 now = time.monotonic()
                 command_timing = CommandTiming(get_last_wake_detected_at() or now)
-                command_timing.mark("command_capture_finished", now)
+                capture_timing = get_last_command_capture_timing()
+                command_timing.mark(
+                    "command_capture_finished",
+                    capture_timing.get("capture_finished_at") or now,
+                )
+                speech_ended_at = capture_timing.get("speech_ended_at")
+                if speech_ended_at is not None:
+                    command_timing.mark("command_speech_ended", speech_ended_at)
                 set_active_command_timing(command_timing)
 
             interaction_count += 1
@@ -477,9 +484,69 @@ def main():
                     )
             elif comment_cancel is None:
                 comment_cancel = threading.Event()
+
+            streamed_speech_thread = None
+            streamed_speech_interrupted = threading.Event()
+            streamed_part_count = 0
+
+            def speak_streamed_sentence(sentence):
+                nonlocal comment_cancel, comment_thread
+                nonlocal streamed_speech_thread, streamed_part_count
+                stop_thinking_comment(comment_cancel, comment_thread)
+                comment_cancel = None
+                comment_thread = None
+                if command_timing is not None and (
+                    "processing_finished" not in command_timing.marks
+                ):
+                    command_timing.mark("processing_finished")
+
+                streamed_part_count += 1
+                if streamed_part_count == 1:
+                    # Keep consuming the AI stream while the first sentence is
+                    # spoken. This lets the model finish the remainder instead
+                    # of blocking network reads for the duration of playback.
+                    def play_first_part():
+                        if command_timing is not None:
+                            set_active_command_timing(command_timing)
+                        try:
+                            if speak(sentence):
+                                streamed_speech_interrupted.set()
+                        finally:
+                            if command_timing is not None:
+                                clear_active_command_timing()
+
+                    streamed_speech_thread = threading.Thread(
+                        target=play_first_part,
+                        name="EzraStreamedSpeech",
+                        daemon=True,
+                    )
+                    streamed_speech_thread.start()
+                    return False
+
+                # Piper can prepare the remainder while the first sentence is
+                # still playing. Once playback ends, use that WAV immediately.
+                with tempfile.TemporaryDirectory(
+                    prefix="ezra-streamed-remainder-"
+                ) as directory:
+                    audio_path = Path(directory) / "remainder.wav"
+                    prepared = generate_speech_file(sentence, audio_path)
+                    streamed_speech_thread.join()
+                    if streamed_speech_interrupted.is_set():
+                        return True
+                    return speak(
+                        sentence,
+                        audio_file=audio_path if prepared else None,
+                    )
+
             try:
-                result = ask_ezra(command)
-                if command_timing is not None:
+                result = ask_ezra(command, on_sentence=speak_streamed_sentence)
+                if streamed_speech_thread is not None:
+                    streamed_speech_thread.join()
+                if streamed_speech_interrupted.is_set():
+                    result["interrupted"] = True
+                if command_timing is not None and (
+                    "processing_finished" not in command_timing.marks
+                ):
                     command_timing.mark("processing_finished")
 
             except InternetUnavailableError:
@@ -523,9 +590,13 @@ def main():
             )
 
             set_emotion(mapped_emotion)
-            speak(response)
+            if not result.get("streamed"):
+                speak(response)
 
-            if emotion in POST_RESPONSE_SMILE_EMOTIONS:
+            if (
+                not result.get("interrupted")
+                and emotion in POST_RESPONSE_SMILE_EMOTIONS
+            ):
                 set_temporary_emotion(
                     "happy",
                     POST_RESPONSE_SMILE_SECONDS,

@@ -40,6 +40,7 @@ class CommandTiming:
     def report(self, outcome="complete"):
         finished = self.marks.get("response_finished", time.monotonic())
         capture_finished = self.marks.get("command_capture_finished")
+        speech_ended = self.marks.get("command_speech_ended")
         stt_started = self.marks.get("stt_started")
         stt_finished = self.marks.get("stt_finished")
         command_ready = self.marks.get("command_ready")
@@ -50,6 +51,14 @@ class CommandTiming:
             (
                 "Wake detected → command capture complete",
                 self._duration(self.wake_detected_at, capture_finished),
+            ),
+            (
+                "Wake detected → command speech ended",
+                self._duration(self.wake_detected_at, speech_ended),
+            ),
+            (
+                "Command speech ended → capture complete",
+                self._duration(speech_ended, capture_finished),
             ),
             ("Speech-to-text", self._duration(stt_started, stt_finished)),
             (
@@ -63,6 +72,10 @@ class CommandTiming:
             (
                 "Speech synthesis/preparation",
                 self._duration(self.speech_requested_at, self.speech_started_at),
+            ),
+            (
+                "Command ready → speech started",
+                self._duration(command_ready, self.speech_started_at),
             ),
             (
                 "Speech playback",
