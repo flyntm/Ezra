@@ -192,6 +192,7 @@ sleeping = False
 last_activity_time = time.time()
 _last_command_doa = None
 _last_command_doa_diagnostic = None
+_last_wake_detected_at = None
 
 
 def get_last_command_doa():
@@ -202,6 +203,11 @@ def get_last_command_doa():
 def get_last_command_doa_diagnostic():
     """Return DoA qualification details for item test 1."""
     return _last_command_doa_diagnostic
+
+
+def get_last_wake_detected_at():
+    """Return the monotonic time of the most recent wake-model detection."""
+    return _last_wake_detected_at
 
 
 def _mean_signed_doa(raw_angles):
@@ -552,6 +558,7 @@ def run(return_audio=False):
     global audio_buffer_idx, recent_buffer_idx
     global audio_buffer_len, recent_buffer_len
     global mic
+    global _last_wake_detected_at
 
     # Reset all detection state each time Wake is entered.
     #
@@ -780,8 +787,12 @@ def run(return_audio=False):
                 break
 
             if now - start_time >= MAX_COMMAND_TIME:
-                print("⚠️ Maximum command time reached")
-                break
+                print(
+                    "⚠️ Maximum command time reached — "
+                    "discarding timed-out audio"
+                )
+                finish_command_direction()
+                return None
 
         if not frames:
             return None
@@ -989,6 +1000,7 @@ def run(return_audio=False):
                 pending_wake = True
                 pending_wake_time = current_time
                 pending_phrase = detected_phrase
+                _last_wake_detected_at = time.monotonic()
 
             # Confirm the pending detection.
             if pending_wake:
@@ -1146,7 +1158,9 @@ def run(return_audio=False):
 
     finally:
         try:
-            stream.stop()
+            # Abort instead of draining the live input stream. A graceful
+            # PortAudio stop can block after a command-capture timeout.
+            stream.abort()
         except Exception:
             pass
 

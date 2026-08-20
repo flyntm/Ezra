@@ -4,18 +4,17 @@ import random
 import threading
 import time
 
-WIDE_AUDIENCE_BEARINGS = (
-    -48.0,
-    -35.0,
-    -22.0,
-    -10.0,
-    0.0,
-    12.0,
-    25.0,
-    38.0,
-    50.0,
+from config import (
+    PRESENTATION_HEAD_INITIAL_LOOK_DELAY_SECONDS,
+    PRESENTATION_HEAD_LOOK_INTERVAL_SECONDS,
+    PRESENTATION_NARROW_AUDIENCE_BEARINGS,
+    PRESENTATION_WIDE_AUDIENCE_BEARINGS,
 )
-NARROW_AUDIENCE_BEARINGS = (-35.0, -18.0, 0.0, 18.0, 35.0)
+
+
+# Preserve these names for presentation modules that already import them.
+WIDE_AUDIENCE_BEARINGS = PRESENTATION_WIDE_AUDIENCE_BEARINGS
+NARROW_AUDIENCE_BEARINGS = PRESENTATION_NARROW_AUDIENCE_BEARINGS
 
 
 def audience_look_targets(head_tracker, bearings=WIDE_AUDIENCE_BEARINGS):
@@ -48,7 +47,9 @@ def speak_with_head_motion(
     def move_head():
         if not playback_started.wait(timeout=30.0):
             return
-        if stop_motion.wait(random.uniform(0.45, 1.0)):
+        if stop_motion.wait(
+            random.uniform(*PRESENTATION_HEAD_INITIAL_LOOK_DELAY_SECONDS)
+        ):
             return
 
         movements = [move for move in (look_targets or ()) if move is not None]
@@ -73,7 +74,9 @@ def speak_with_head_motion(
                     return
                 movement()
                 previous_movement = movement
-                if stop_motion.wait(random.uniform(1.7, 3.4)):
+                if stop_motion.wait(
+                    random.uniform(*PRESENTATION_HEAD_LOOK_INTERVAL_SECONDS)
+                ):
                     return
 
     motion_thread = threading.Thread(target=move_head, daemon=True)

@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from unittest.mock import patch
 from dataclasses import replace
 from pathlib import Path
 import zipfile
@@ -16,7 +17,13 @@ from presentations.acts_lesson_one import (
 )
 from presentations.powerpoint import PowerPointDeck
 from presentations.browser_slideshow import render_pptx_html
-from presentations.common import is_name_origin_request, present_name_origin
+from presentations.common import (
+    INTRODUCTION,
+    INTRODUCTION_OFFLINE_NOTICE,
+    is_name_origin_request,
+    present_introduction,
+    present_name_origin,
+)
 
 
 class FakeSlideshow:
@@ -273,6 +280,28 @@ class ActsSessionTests(unittest.TestCase):
         self.assertEqual(self.spoken, spoken_before_jump)
         self.assertEqual(self.session.slide_index, 1)
 
+    def test_jump_to_slide_and_explain_reads_script(self):
+        self.session.start()
+        acts_lesson_one._session = self.session
+        self.addCleanup(setattr, acts_lesson_one, "_session", None)
+        self.assertTrue(
+            handle_active_command("go to slide 2 and explain", self.session.speak)
+        )
+        self.assertEqual(self.session.slide_index, 1)
+        self.assertIn("three decades", self.spoken[-1])
+
+    def test_previous_and_explain_reads_previous_slide_script(self):
+        self.session.start()
+        acts_lesson_one._session = self.session
+        self.addCleanup(setattr, acts_lesson_one, "_session", None)
+        handle_active_command("go to slide 3", self.session.speak)
+        spoken_before_previous = len(self.spoken)
+        self.assertTrue(
+            handle_active_command("previous and explain", self.session.speak)
+        )
+        self.assertEqual(self.session.slide_index, 1)
+        self.assertEqual(len(self.spoken), spoken_before_previous + 1)
+
     def test_jump_to_answer_slide_displays_answers_without_reading(self):
         self.session.start()
         acts_lesson_one._session = self.session
@@ -292,12 +321,30 @@ class ActsSessionTests(unittest.TestCase):
         self.assertEqual(_parse_slide_number("one hundred"), 100)
         self.assertIsNone(_parse_slide_number("one hundred one"))
 
-    def test_old_slide_jump_phrasing_is_not_claimed(self):
+    def test_show_numbered_slide_phrasing_is_claimed(self):
         self.session.start()
         acts_lesson_one._session = self.session
         self.addCleanup(setattr, acts_lesson_one, "_session", None)
-        self.assertFalse(handle_active_command("show the 4th slide", self.session.speak))
+        self.assertTrue(handle_active_command("show the 4th slide", self.session.speak))
+        self.assertEqual(self.session.slide_index, 3)
         self.assertFalse(handle_active_command("fourth slide please", self.session.speak))
+
+    def test_show_fifth_slide_restores_presentation_from_bible_display(self):
+        self.session.start()
+        acts_lesson_one._session = self.session
+        self.addCleanup(setattr, acts_lesson_one, "_session", None)
+
+        with patch(
+            "presentations.acts_lesson_one.close_bible_display"
+        ) as close_display:
+            handled = handle_active_command(
+                "show the fifth slide",
+                self.session.speak,
+            )
+
+        self.assertTrue(handled)
+        self.assertEqual(self.session.slide_index, 4)
+        close_display.assert_called_once_with()
 
     def test_spoken_ordinal_jump_and_current_slide_narration(self):
         self.session.start()
@@ -331,6 +378,17 @@ class ActsSessionTests(unittest.TestCase):
         self.assertTrue(handle_active_command("show question seven", self.session.speak))
         self.assertEqual(self.slides.actions[-1], ("go_to", 13))
         self.assertEqual(self.session.slide_index, 13)
+
+    def test_question_jump_and_explain_reads_script(self):
+        self.session.start()
+        acts_lesson_one._session = self.session
+        self.addCleanup(setattr, acts_lesson_one, "_session", None)
+        spoken_before_jump = len(self.spoken)
+        self.assertTrue(
+            handle_active_command("show question four and explain", self.session.speak)
+        )
+        self.assertEqual(self.session.slide_index, 8)
+        self.assertEqual(len(self.spoken), spoken_before_jump + 1)
 
     def test_plural_answers_reveals_answer(self):
         self.session.start()
@@ -385,6 +443,18 @@ class ActsSessionTests(unittest.TestCase):
         self.assertEqual(self.session.slide_index, 3)
         self.assertEqual(self.spoken, spoken_before_reveal)
 
+    def test_display_answers_and_explain_reads_script(self):
+        self.session.start()
+        acts_lesson_one._session = self.session
+        self.addCleanup(setattr, acts_lesson_one, "_session", None)
+        handle_active_command("go to slide three", self.session.speak)
+        spoken_before_reveal = len(self.spoken)
+        self.assertTrue(
+            handle_active_command("display the answers and explain", self.session.speak)
+        )
+        self.assertEqual(self.session.slide_index, 3)
+        self.assertEqual(len(self.spoken), spoken_before_reveal + 1)
+
     def test_out_of_range_slide_reports_deck_size(self):
         self.session.start()
         acts_lesson_one._session = self.session
@@ -395,6 +465,27 @@ class ActsSessionTests(unittest.TestCase):
 
 
 class CommonPresentationTests(unittest.TestCase):
+    def test_offline_introduction_adds_notice_after_unchanged_script(self):
+        spoken = []
+        interrupted = present_introduction(
+            lambda text, **_kwargs: spoken.append(text) or False,
+            offline=True,
+        )
+        self.assertFalse(interrupted)
+        self.assertEqual(
+            spoken,
+            [f"{INTRODUCTION} {INTRODUCTION_OFFLINE_NOTICE}"],
+        )
+
+    def test_online_introduction_does_not_add_offline_notice(self):
+        spoken = []
+        present_introduction(
+            lambda text, **_kwargs: spoken.append(text) or False,
+            offline=False,
+        )
+        self.assertEqual(spoken, [INTRODUCTION])
+        self.assertNotIn(INTRODUCTION_OFFLINE_NOTICE, spoken)
+
     def test_name_origin_command_patterns(self):
         self.assertTrue(
             is_name_origin_request("Ezra, tell us where your name comes from")

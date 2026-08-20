@@ -6,7 +6,11 @@ from pathlib import Path
 import re
 import threading
 
-from config import PRESENTATION_TTS_CHUNK_MAX_CHARS
+from bible_display import close_bible_display
+from config import (
+    PRESENTATION_TTS_CHUNK_MAX_CHARS,
+    SCRIPTED_TTS_SENTENCE_SILENCE,
+)
 
 from .browser_slideshow import BrowserSlideshow
 from .powerpoint import PowerPointDeck, PresentationError, RehearsalSlideshow
@@ -50,14 +54,22 @@ _NARRATE_PATTERN = re.compile(
     r"\b(?:please\s+)?tell\s+(?:us|me)\s+about\s+(?:this|the)\s+slide\b",
     re.IGNORECASE,
 )
+_EXPLAIN_SUFFIX_PATTERN = re.compile(
+    r"\s+and\s+explain\s*[.!?]?$", re.IGNORECASE
+)
 _QUESTION_JUMP_PATTERN = re.compile(
     r"\b(?:show|go\s+to|display)\s+(?:us\s+)?(?:the\s+)?question\s+"
     r"(?P<number>\d+|one|two|three|four|five|six|seven|eight|nine|ten)\b",
     re.IGNORECASE,
 )
 _SLIDE_JUMP_PATTERN = re.compile(
-    r"\bgo\s+to\s+(?:the\s+)?slide(?:\s+number)?\s+"
-    r"(?P<number>\d{1,3}|[a-z]+(?:[\s-]+[a-z]+){0,2})"
+    r"\b(?:(?:go\s+to|show|display)\s+(?:the\s+)?"
+    r"slide(?:\s+number)?\s+"
+    r"(?P<number_after>\d{1,3}(?:st|nd|rd|th)?|"
+    r"[a-z]+(?:[\s-]+[a-z]+){0,2})|"
+    r"(?:show|display)\s+(?:the\s+)?"
+    r"(?P<number_before>\d{1,3}(?:st|nd|rd|th)?|"
+    r"[a-z]+(?:[\s-]+[a-z]+){0,2})\s+slide)"
     r"(?:\s+please)?[.!?]?$",
     re.IGNORECASE,
 )
@@ -140,6 +152,10 @@ def _parse_slide_number(value):
     if text.isdigit():
         number = int(text)
         return number if 1 <= number <= 100 else None
+    numeric_ordinal = re.fullmatch(r"(\d{1,3})(?:st|nd|rd|th)", text)
+    if numeric_ordinal:
+        number = int(numeric_ordinal.group(1))
+        return number if 1 <= number <= 100 else None
     if text in ("one hundred", "one hundredth", "hundred", "hundredth"):
         return 100
     if text in _SMALL_NUMBER_WORDS:
@@ -220,6 +236,7 @@ class ActsLessonOneSession:
                     self.slideshow, "skip_event", None
                 ),
                 chunk_max_chars=PRESENTATION_TTS_CHUNK_MAX_CHARS,
+                sentence_silence=SCRIPTED_TTS_SENTENCE_SILENCE,
             )
         finally:
             if self.center_head is not None:
@@ -419,8 +436,10 @@ def start_presentation(speak, rehearsal=False, slide_number=1):
 
 def handle_active_command(command, speak):
     global _session
-    jump_match = _SLIDE_JUMP_PATTERN.search(command)
-    question_jump_match = _QUESTION_JUMP_PATTERN.search(command)
+    explain = bool(_EXPLAIN_SUFFIX_PATTERN.search(command))
+    navigation_command = _EXPLAIN_SUFFIX_PATTERN.sub("", command)
+    jump_match = _SLIDE_JUMP_PATTERN.search(navigation_command)
+    question_jump_match = _QUESTION_JUMP_PATTERN.search(navigation_command)
     patterns = (
         _STOP_PATTERN,
         _NEXT_PATTERN,
@@ -430,23 +449,29 @@ def handle_active_command(command, speak):
         _NARRATE_PATTERN,
     )
     if not question_jump_match and not jump_match and not any(
-        pattern.search(command) for pattern in patterns
+        pattern.search(navigation_command) for pattern in patterns
     ):
         return False
     if not has_active_presentation():
         speak("There is no active presentation.")
         return True
+    # A persistent Bible passage may currently cover the slideshow. Any
+    # recognized presentation command brings the active deck back to front.
+    close_bible_display()
     try:
-        if _STOP_PATTERN.search(command):
+        if _STOP_PATTERN.search(navigation_command):
             _session.stop()
             _session = None
             speak("Presentation stopped.")
             return True
-        if _NEXT_PATTERN.search(command):
+        if _NEXT_PATTERN.search(navigation_command):
             _session.next()
             return True
-        if _PREVIOUS_PATTERN.search(command):
+        if _PREVIOUS_PATTERN.search(navigation_command):
+            previous_index = _session.slide_index
             _session.previous()
+            if explain and _session.slide_index != previous_index:
+                _session.narrate_current()
             return True
         if question_jump_match:
             matched_number = question_jump_match.group("number").lower()
@@ -456,22 +481,30 @@ def handle_active_command(command, speak):
                 else _CARDINAL_WORDS[matched_number]
             )
             _session.go_to_question(question_number)
+            if explain:
+                _session.narrate_current()
             return True
         if jump_match:
-            slide_number = _parse_slide_number(jump_match.group("number"))
+            matched_number = (
+                jump_match.group("number_after")
+                or jump_match.group("number_before")
+            )
+            slide_number = _parse_slide_number(matched_number)
             if slide_number is None:
                 raise PresentationError(
                     "Please choose a slide number from 1 through 100."
                 )
             _session.go_to(slide_number)
+            if explain:
+                _session.narrate_current()
             return True
-        if _REVEAL_PATTERN.search(command):
+        if _REVEAL_PATTERN.search(navigation_command):
             _session.reveal()
             return True
-        if _DISPLAY_ANSWERS_PATTERN.search(command):
-            _session.reveal(read_script=False)
+        if _DISPLAY_ANSWERS_PATTERN.search(navigation_command):
+            _session.reveal(read_script=explain)
             return True
-        if _NARRATE_PATTERN.search(command):
+        if _NARRATE_PATTERN.search(navigation_command):
             _session.narrate_current()
             return True
     except PresentationError as exc:

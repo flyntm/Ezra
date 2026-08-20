@@ -3,11 +3,15 @@
 from datetime import datetime
 import re
 import subprocess
+import time
 
 import state
 
-from config import GOODBYE_TEXT
+from bible_display import close_bible_display, show_bible_passage, split_passage_response
+from bible_service import get_bible_response
+from config import ENABLE_BIBLE_DISPLAY, GOODBYE_TEXT, SHUTDOWN_SLEEP_SETTLE_SECONDS
 from live_info import get_live_info_response
+from network_status import internet_access_allowed
 from presentations import (
     handle_presentation_command,
     is_introduction_request,
@@ -25,7 +29,7 @@ from presentations.presenter import (
     audience_look_targets,
 )
 from tts import speak
-from wake_word import reset_idle_timer
+from wake_word import enter_sleep, reset_idle_timer, wake_up
 
 VOLUME_WORDS = {
     "one": 1,
@@ -175,6 +179,8 @@ def handle_local_command(command):
 
     if is_rehearsal_request(command) or is_presentation_request(command):
         try:
+            if is_presentation_request(command):
+                close_bible_display()
             start_presentation(
                 speak,
                 rehearsal=is_rehearsal_request(command),
@@ -192,13 +198,16 @@ def handle_local_command(command):
         return True
 
     if looks_like_poweroff_command(command):
-        speak("Shutting down now.")
-        state.shutting_down = True
+        speak("See ya later.")
+        enter_sleep()
+        time.sleep(SHUTDOWN_SLEEP_SETTLE_SECONDS)
 
         if request_system_poweroff():
+            state.shutting_down = True
             return True
 
         print("⚠️ System shutdown command failed")
+        wake_up()
         speak("I couldn't shut down the system.")
         return True
 
@@ -234,6 +243,7 @@ def handle_local_command(command):
             speak,
             smile=lambda seconds: set_temporary_emotion("happy", seconds),
             look_targets=look_targets,
+            offline=not internet_access_allowed(),
         )
         head_tracker.center()
         reset_idle_timer()
@@ -260,6 +270,27 @@ def handle_local_command(command):
     if "what time" in text_lower or "time is it" in text_lower:
         now = datetime.now().strftime("%I:%M %p")
         speak(f"It is {now}")
+        reset_idle_timer()
+        return True
+
+    bible_response = get_bible_response(command)
+    if bible_response:
+        bible_display = None
+        display_content = split_passage_response(bible_response)
+        if ENABLE_BIBLE_DISPLAY and display_content is not None:
+            try:
+                bible_display = show_bible_passage(*display_content)
+            except (OSError, RuntimeError) as exc:
+                print(f"⚠️ Bible display unavailable: {exc}")
+        speak(
+            getattr(bible_response, "tts_text", bible_response),
+            on_playback_start=(
+                bible_display.begin_reading if bible_display is not None else None
+            ),
+            on_playback_complete=(
+                bible_display.finish_reading if bible_display is not None else None
+            ),
+        )
         reset_idle_timer()
         return True
 

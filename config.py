@@ -11,6 +11,9 @@ VERBOSE_RUNTIME_LOGS = False
 # Toggle post-command audio replay diagnostics.
 ENABLE_PLAYBACK_DIAGNOSTICS = False
 
+# Print a stage-by-stage latency summary after each completed command.
+ENABLE_COMMAND_TIMING_DIAGNOSTIC = True
+
 # Item test 1: report the wake/utterance direction without running speech-to-text,
 # command handling, AI response, TTS, or head movement. Set to False to restore
 # normal operation.
@@ -78,6 +81,11 @@ WAKE_ONLY_DOA_MIN_ACTIVE_SPEECH_SECONDS = 0.75
 
 # Enable live web lookups for weather/news style requests.
 ENABLE_LIVE_INFO = True
+
+# Simulate a device with no internet connection. This prevents connectivity
+# probes and all known external HTTP/API calls while leaving local services
+# (including the loopback AI server) available for offline testing.
+OFFLINE_TEST_MODE = False
 
 # Enable voice stop detection while Ezra is currently speaking.
 ENABLE_MID_RESPONSE_STOP = True
@@ -230,6 +238,35 @@ TTS_EMPHASIS_BOUNDARY_PAUSE_SECONDS = 0.40
 # Silence Piper adds after sentence-ending punctuation.
 TTS_SENTENCE_SILENCE = 1.0
 
+# Prepared presentation scripts sound more natural with a shorter full-stop
+# pause than conversational answers and Bible readings.
+SCRIPTED_TTS_SENTENCE_SILENCE = 0.7
+
+# Head movement used while Ezra delivers prepared presentation scripts.
+PRESENTATION_HEAD_INITIAL_LOOK_DELAY_SECONDS = (2.0, 4.0)
+PRESENTATION_HEAD_LOOK_INTERVAL_SECONDS = (3.0, 6.0)
+PRESENTATION_WIDE_AUDIENCE_BEARINGS = (
+    -48.0,
+    -35.0,
+    -22.0,
+    -10.0,
+    0.0,
+    12.0,
+    25.0,
+    38.0,
+    50.0,
+)
+PRESENTATION_NARROW_AUDIENCE_BEARINGS = (
+    -35.0,
+    -18.0,
+    0.0,
+    18.0,
+    35.0,
+)
+
+# Additional silence requested by an exact [Pause] speech-control marker.
+TTS_EXPLICIT_PAUSE_SECONDS = 1.5
+
 # Add a separate pause after clause-ending colons and semicolons. Colons inside
 # values such as times and ratios are left unchanged.
 TTS_PAUSE_AT_COLONS_AND_SEMICOLONS = True
@@ -260,7 +297,9 @@ TTS_START_DELAY = 0.05
 
 # Keep responses in one continuous WAV when practical. This avoids the
 # generation/launch gap between short TTS chunks sounding like a long period.
-TTS_CHUNK_MAX_CHARS = 5000
+# Long responses are synthesized in sentence-aware chunks. While one chunk is
+# playing, Piper prepares the next one so Ezra starts speaking sooner.
+TTS_CHUNK_MAX_CHARS = 350
 
 # Retain a named presentation setting for the slide narration call site while
 # using the same smooth speech segmentation everywhere.
@@ -350,13 +389,34 @@ QUIT_KEYWORDS = ["quit", "exit", "stop"]
 # Spoken exit message
 GOODBYE_TEXT = "Goodbye!"
 
+# Hold the completed sleep pose briefly before powering off the Pi.
+SHUTDOWN_SLEEP_SETTLE_SECONDS = 1.0
+
 
 # =========================
 # AI SETTINGS
 # =========================
 
+# AI response provider. Use "openai" for the current cloud brain or "local"
+# for an OpenAI-compatible llama.cpp server running on this Pi. The
+# EZRA_AI_PROVIDER environment variable can override this during testing.
+AI_PROVIDER = "openai"
+
 # OpenAI model
 OPENAI_MODEL = "gpt-4.1-mini"
+
+# Local llama.cpp server settings. The server is deliberately bound to the Pi's
+# loopback interface so it is unavailable to other devices on the network.
+LOCAL_AI_BASE_URL = "http://127.0.0.1:8081/v1"
+LOCAL_AI_MODEL = "Qwen3-1.7B-Q8_0.gguf"
+LOCAL_AI_SERVER_PATH = "/home/flyntm/.local/share/ezra/llama/llama-server"
+LOCAL_AI_MODEL_PATH = "/home/flyntm/.local/share/ezra/models/Qwen3-1.7B-Q8_0.gguf"
+LOCAL_AI_STARTUP_TIMEOUT_SECONDS = 60
+LOCAL_AI_CONTEXT_SIZE = 2048
+LOCAL_AI_TIMEOUT_SECONDS = 45
+LOCAL_AI_MAX_TOKENS = 120
+LOCAL_AI_TEMPERATURE = 0.2
+LOCAL_AI_DISABLE_THINKING = True
 
 # Max conversation history length
 MAX_HISTORY = 12
@@ -431,7 +491,7 @@ WAKE_SAMPLE_RATE = 16000
 WAKE_CHANNELS = 1
 WAKE_BLOCK_SIZE = 1024
 
-WAKE_THRESHOLD = 0.10
+WAKE_THRESHOLD = 0.20
 WAKE_REARM_THRESHOLD = 0.05
 
 HEY_EZRA_MIN_SCORE = 0.55
@@ -442,7 +502,7 @@ FORCE_HEY_EZRA_SCORE = 0.985
 STOP_GUARD_THRESHOLD = 0.80
 STOP_GUARD_HITS = 3
 
-WAKE_CONFIRM_DELAY = 0.05
+WAKE_CONFIRM_DELAY = 0.25
 
 RECENT_AUDIO_SECONDS = 16.0
 PREBUFFER_SECONDS = 1.10
@@ -522,6 +582,30 @@ HEAD_TRACKING_STEP_DELAY_SECONDS = 0.035
 
 # Network timeout for live info HTTP requests.
 LIVE_INFO_TIMEOUT_SECONDS = 6
+
+# Background internet-status monitor. A TCP connection is enough to verify
+# usable DNS and outbound connectivity without downloading page content.
+INTERNET_CHECK_INTERVAL_SECONDS = 30
+INTERNET_CHECK_TIMEOUT_SECONDS = 2
+INTERNET_CHECK_ENDPOINTS = (
+    ("rest.api.bible", 443),
+    ("api.openai.com", 443),
+)
+
+
+# =========================
+# BIBLE SOURCES
+# =========================
+
+# Exact Scripture readings use NIV through API.Bible when it is reachable and
+# fall back to the public-domain World English Bible stored on the Pi.
+ENABLE_BIBLE_PASSAGES = True
+ENABLE_BIBLE_DISPLAY = True
+API_BIBLE_BASE_URL = "https://rest.api.bible/v1"
+API_BIBLE_TIMEOUT_SECONDS = 5
+API_BIBLE_NIV_ID = ""  # Optional; Ezra can discover it from the account.
+WEB_BIBLE_DATABASE = "/home/flyntm/.local/share/ezra/bible/web.sqlite3"
+BIBLE_MAX_SPOKEN_VERSES = 30
 
 # Headlines returned per source when user asks for news/current events.
 NEWS_HEADLINE_COUNT = 3

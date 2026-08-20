@@ -19,6 +19,7 @@ from config import (
     WEATHER_NWS_USER_AGENT,
     WEATHER_STATION_SEARCH_LIMIT,
 )
+from network_status import internet_access_allowed
 
 
 def _normalize_location(raw_location):
@@ -275,6 +276,9 @@ def get_live_info_response(command):
 
     if not wants_weather and not wants_news:
         return None
+
+    if not internet_access_allowed():
+        return "Sorry, I'm not connected to the internet, so I can't answer that."
 
     parts = []
 

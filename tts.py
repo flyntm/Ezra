@@ -1,5 +1,6 @@
 import contextlib
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import os
 from pathlib import Path
@@ -21,6 +22,11 @@ from ezra_emotion import set_emotion, set_talk_level
 from mouth_sync import build_mouth_envelope
 from respeaker_io import create_respeaker_or_raise
 import state
+from command_timing import (
+    note_speech_finished,
+    note_speech_requested,
+    note_speech_started,
+)
 
 
 @contextlib.contextmanager
@@ -45,8 +51,13 @@ _speech_cache = {}
 _evdev_warning_shown = False
 
 
-def _monitor_presentation_skip(stop_event, skip_event, ready_event):
-    """Treat Escape or Space as a skip while preserving terminal state."""
+def _monitor_presentation_skip(
+    stop_event,
+    skip_event,
+    ready_event,
+    allow_space=False,
+):
+    """Treat Escape, and optionally Space, as a speech interruption."""
     if not sys.stdin.isatty():
         ready_event.set()
         return
@@ -66,7 +77,7 @@ def _monitor_presentation_skip(stop_event, skip_event, ready_event):
             readable, _, _ = select.select([fd], [], [], 0.1)
             if readable:
                 key = os.read(fd, 1)
-                if key in (b"\x1b", b" "):
+                if key == b"\x1b" or (allow_space and key == b" "):
                     key_name = "escape" if key == b"\x1b" else "space"
                     print(f"[presentation] keyboard_skip={key_name}")
                     skip_event.set()
@@ -379,10 +390,21 @@ def _split_tts_text(text, max_chars=None):
         if piece.strip()
     ]
 
+    bounded_pieces = []
+    for piece in pieces:
+        while len(piece) > max_chars:
+            split_at = piece.rfind(" ", 0, max_chars + 1)
+            if split_at < 1:
+                split_at = max_chars
+            bounded_pieces.append(piece[:split_at].strip())
+            piece = piece[split_at:].strip()
+        if piece:
+            bounded_pieces.append(piece)
+
     chunks = []
     current = ""
 
-    for piece in pieces:
+    for piece in bounded_pieces:
         if not current:
             current = piece
         elif len(current) + 1 + len(piece) <= max_chars:
@@ -395,6 +417,23 @@ def _split_tts_text(text, max_chars=None):
         chunks.append(current)
 
     return chunks or [text]
+
+
+def _render_speech_unit(speech_unit, output_file, sentence_silence=None):
+    """Render one chunk to its own file for look-ahead synthesis."""
+    text, emphasized, _pause_after = speech_unit
+    length_scale = TTS_LENGTH_SCALE
+    if emphasized:
+        length_scale *= TTS_EMPHASIS_LENGTH_SCALE_MULTIPLIER
+        print(f"[tts] emphasis={text!r}")
+    if generate_speech_file(
+        text,
+        output_file,
+        length_scale=length_scale,
+        sentence_silence=sentence_silence,
+    ):
+        return output_file
+    return None
 
 
 def _split_emphasis_segments(text):
@@ -455,6 +494,22 @@ def _split_clause_pause_segments(text):
     return segments or [(str(text), 0.0)]
 
 
+def _split_explicit_pause_segments(text):
+    """Remove [Pause] markers and attach silence to the preceding text."""
+
+    pieces = re.split(r"\s*\[Pause\]\s*", str(text), flags=re.IGNORECASE)
+    segments = []
+    for index, piece in enumerate(pieces):
+        cleaned = piece.strip()
+        if not cleaned:
+            continue
+        pause_after = (
+            TTS_EXPLICIT_PAUSE_SECONDS if index < len(pieces) - 1 else 0.0
+        )
+        segments.append((cleaned, pause_after))
+    return segments or [(str(text).replace("[Pause]", "").strip(), 0.0)]
+
+
 def _apply_pronunciation_overrides(text):
     """Apply whole-word, case-insensitive respellings only for Piper input."""
     spoken_text = str(text)
@@ -471,7 +526,12 @@ def _apply_pronunciation_overrides(text):
     return spoken_text
 
 
-def generate_speech_file(text, output_file="temp.wav", length_scale=None):
+def generate_speech_file(
+    text,
+    output_file="temp.wav",
+    length_scale=None,
+    sentence_silence=None,
+):
     """Generate one Piper WAV, optionally for a reusable personality cache."""
     if state.shutting_down:
         return False
@@ -484,7 +544,11 @@ def generate_speech_file(text, output_file="temp.wav", length_scale=None):
         "--length_scale",
         str(TTS_LENGTH_SCALE if length_scale is None else length_scale),
         "--sentence_silence",
-        str(TTS_SENTENCE_SILENCE),
+        str(
+            TTS_SENTENCE_SILENCE
+            if sentence_silence is None
+            else sentence_silence
+        ),
         "--output_file",
         os.fspath(output_file),
     ]
@@ -504,7 +568,11 @@ def generate_speech_file(text, output_file="temp.wav", length_scale=None):
     return result.returncode == 0 and os.path.exists(output_file)
 
 
-def _generate_combined_speech_file(speech_units, output_file="temp.wav"):
+def _generate_combined_speech_file(
+    speech_units,
+    output_file="temp.wav",
+    sentence_silence=None,
+):
     """Synthesize marked segments and join them with controlled pauses."""
     with tempfile.TemporaryDirectory(prefix="ezra-speech-") as directory:
         rendered = []
@@ -514,7 +582,12 @@ def _generate_combined_speech_file(speech_units, output_file="temp.wav"):
             if emphasized:
                 length_scale *= TTS_EMPHASIS_LENGTH_SCALE_MULTIPLIER
                 print(f"[tts] emphasis={text!r}")
-            if not generate_speech_file(text, path, length_scale=length_scale):
+            if not generate_speech_file(
+                text,
+                path,
+                length_scale=length_scale,
+                sentence_silence=sentence_silence,
+            ):
                 return False
             rendered.append(path)
 
@@ -693,11 +766,21 @@ def speak(
     allow_keyboard_skip=False,
     presentation_skip_event=None,
     chunk_max_chars=None,
+    allow_escape_stop=True,
+    sentence_silence=None,
 ):
     if state.shutting_down:
         return False
 
-    print(f"Ezra: {text}")
+    note_speech_requested()
+
+    terminal_text = re.sub(
+        r"\s*\[Pause\]\s*",
+        " ",
+        str(text),
+        flags=re.IGNORECASE,
+    ).strip()
+    print(f"Ezra: {terminal_text}")
 
     # Open the live stop listener before playback so the speaker device does
     # not win the hardware race and hide "Ezra stop" from the microphone.
@@ -724,17 +807,18 @@ def speak(
         )
         monitor_thread.start()
         ready_event.wait(timeout=MID_RESPONSE_STOP_READY_TIMEOUT)
-        print(
-            "[tts] mid_response_stop=enabled "
-            f"threshold={MID_RESPONSE_STOP_GUARD_THRESHOLD:.2f}"
-        )
     elif allow_mid_response_stop:
         _flush_stop_model()
 
-    if allow_keyboard_skip:
+    if allow_keyboard_skip or allow_escape_stop:
         keyboard_thread = threading.Thread(
             target=_monitor_presentation_skip,
-            args=(stop_event, keyboard_skip, keyboard_ready),
+            args=(
+                stop_event,
+                keyboard_skip,
+                keyboard_ready,
+                allow_keyboard_skip,
+            ),
             daemon=True,
         )
         keyboard_thread.start()
@@ -758,25 +842,37 @@ def speak(
     try:
         speech_units = []
         for segment, emphasized in _split_emphasis_segments(text):
-            for clause, pause_after in _split_clause_pause_segments(segment):
-                chunks = _split_tts_text(clause, max_chars=chunk_max_chars)
-                speech_units.extend(
-                    (
-                        chunk,
-                        emphasized,
-                        pause_after if index == len(chunks) - 1 else 0.0,
+            for explicit_text, explicit_pause in _split_explicit_pause_segments(
+                segment
+            ):
+                clauses = _split_clause_pause_segments(explicit_text)
+                for clause_index, (clause, pause_after) in enumerate(clauses):
+                    if clause_index == len(clauses) - 1:
+                        pause_after = max(pause_after, explicit_pause)
+                    chunks = _split_tts_text(clause, max_chars=chunk_max_chars)
+                    speech_units.extend(
+                        (
+                            chunk,
+                            emphasized,
+                            pause_after if index == len(chunks) - 1 else 0.0,
+                        )
+                        for index, chunk in enumerate(chunks)
                     )
-                    for index, chunk in enumerate(chunks)
-                )
         combined_audio_file = None
-        if len(speech_units) > 1 and any(
-            emphasized or pause_after > 0
-            for _, emphasized, pause_after in speech_units
+        speech_character_count = sum(len(unit[0]) for unit in speech_units)
+        if (
+            speech_character_count <= TTS_CHUNK_MAX_CHARS
+            and len(speech_units) > 1
+            and any(
+                emphasized or pause_after > 0
+                for _, emphasized, pause_after in speech_units
+            )
         ):
             combined_audio_file = "temp.wav"
             if _generate_combined_speech_file(
                 speech_units,
                 combined_audio_file,
+                sentence_silence=sentence_silence,
             ):
                 speech_units = [("", False, 0.0)]
             else:
@@ -785,7 +881,31 @@ def speak(
                 combined_audio_file = None
         playback_started = False
         playback_completed = bool(speech_units)
-        for chunk, emphasized, _pause_after in speech_units:
+        streaming_directory = None
+        streaming_executor = None
+        render_future = None
+        stream_chunks = (
+            combined_audio_file is None
+            and audio_file is None
+            and len(speech_units) > 1
+        )
+        if stream_chunks:
+            streaming_directory = tempfile.TemporaryDirectory(
+                prefix="ezra-streaming-speech-"
+            )
+            streaming_executor = ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix="ezra-tts",
+            )
+            first_path = Path(streaming_directory.name) / "chunk-0.wav"
+            render_future = streaming_executor.submit(
+                _render_speech_unit,
+                speech_units[0],
+                first_path,
+                sentence_silence,
+            )
+
+        for index, (chunk, emphasized, _pause_after) in enumerate(speech_units):
             if stop_event.is_set():
                 if keyboard_skip.is_set():
                     skipped_by_keyboard = True
@@ -795,6 +915,22 @@ def speak(
                 break
 
             chunk_audio_file = combined_audio_file
+            if stream_chunks:
+                chunk_audio_file = render_future.result()
+                if chunk_audio_file is None:
+                    playback_completed = False
+                    break
+                if index + 1 < len(speech_units):
+                    next_path = (
+                        Path(streaming_directory.name)
+                        / f"chunk-{index + 1}.wav"
+                    )
+                    render_future = streaming_executor.submit(
+                        _render_speech_unit,
+                        speech_units[index + 1],
+                        next_path,
+                        sentence_silence,
+                    )
             if chunk_audio_file is None:
                 chunk_audio_file = (
                     audio_file
@@ -809,6 +945,7 @@ def speak(
                 if not generate_speech_file(
                     chunk,
                     length_scale=length_scale,
+                    sentence_silence=sentence_silence,
                 ):
                     playback_completed = False
                     break
@@ -826,6 +963,8 @@ def speak(
             if TTS_START_DELAY > 0:
                 time.sleep(TTS_START_DELAY)
             set_emotion(EMOTION_TALKING)
+
+            note_speech_started()
 
             if not playback_started and on_playback_start is not None:
                 try:
@@ -848,6 +987,15 @@ def speak(
             if playback_result is not False:
                 playback_completed = False
                 break
+            if _pause_after > 0 and combined_audio_file is None:
+                stop_event.wait(_pause_after)
+
+        note_speech_finished()
+
+        if streaming_executor is not None:
+            streaming_executor.shutdown(wait=True, cancel_futures=True)
+        if streaming_directory is not None:
+            streaming_directory.cleanup()
 
         if playback_completed and on_playback_complete is not None:
             try:

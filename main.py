@@ -8,7 +8,13 @@ import state
 
 from audio import get_last_command_doa, listen
 from audio_debug import playback_diagnostic, save_debug_wav
+from bible_display import close_bible_display
 from command import handle_local_command
+from command_timing import (
+    CommandTiming,
+    clear_active_command_timing,
+    set_active_command_timing,
+)
 from command_normalization import (
     is_follow_up_cancel,
     is_unclear_single_word,
@@ -16,9 +22,12 @@ from command_normalization import (
     strip_wake_word,
 )
 from config import *
-from ezra_brain import ask_ezra
+from ezra_brain import InternetUnavailableError, ask_ezra
 from ezra_emotion import set_emotion, set_temporary_emotion
 from item_tests import display_command_text_diagnostic, display_doa_diagnostic
+from local_ai_server import start_local_ai_server, stop_local_ai_server
+from network_status import internet_access_allowed
+from network_status import start_connectivity_monitor, stop_connectivity_monitor
 from stt import transcribe
 from thinking_comments import prepare_thinking_comments, start_comment
 from tts import prepare_speech_cache, speak, speak_cached
@@ -26,6 +35,7 @@ from wake_word import (
     CONTINUOUS_CAPTURE_AFTER_WAKE,
     get_last_command_doa as get_last_continuous_command_doa,
     get_last_command_doa_diagnostic,
+    get_last_wake_detected_at,
     reset_idle_timer,
     wait_for_wake_word_with_audio,
 )
@@ -57,7 +67,11 @@ def maybe_playback_diagnostic(debug_audio=None):
     playback_diagnostic()
 
 
-def acknowledge_wake_word(comment_cancel=None, comment_thread=None):
+def acknowledge_wake_word(
+    comment_cancel=None,
+    comment_thread=None,
+    command_timing=None,
+):
     """Acknowledge a wake word, then listen once more without requiring it."""
 
     stop_thinking_comment(comment_cancel, comment_thread)
@@ -73,7 +87,12 @@ def acknowledge_wake_word(comment_cancel=None, comment_thread=None):
             break
 
         set_emotion(EMOTION_THINKING)
+        if command_timing is not None:
+            command_timing.mark("command_capture_finished")
+            command_timing.mark("stt_started")
         text = transcribe(audio)
+        if command_timing is not None:
+            command_timing.mark("stt_finished")
         if VERBOSE_RUNTIME_LOGS:
             print(f"🧪 Follow-up STT raw text: [{text}]")
 
@@ -96,6 +115,8 @@ def acknowledge_wake_word(comment_cancel=None, comment_thread=None):
                     source="follow-up command",
                 )
             print(f"👂 Follow-up command received: {command}")
+            if command_timing is not None:
+                command_timing.reset_response_speech()
             return command
 
         if text and is_wake_word_only(command):
@@ -132,6 +153,18 @@ def stop_thinking_comment(cancel_event, comment_thread):
     cancel_event.set()
     if comment_thread is not None:
         comment_thread.join(timeout=0.30)
+
+
+def finish_command_timing(command_timing, outcome="complete"):
+    """Complete and print one optional interaction timing report."""
+    if command_timing is None:
+        return
+    now = time.monotonic()
+    if "processing_finished" not in command_timing.marks:
+        command_timing.mark("processing_finished", now)
+    command_timing.mark("response_finished", now)
+    command_timing.report(outcome)
+    clear_active_command_timing()
 
 
 def log_speaker_output_sanity():
@@ -185,6 +218,9 @@ def shutdown_robot():
     print("\n🛑 Shutting down Ezra...")
 
     try:
+        close_bible_display()
+        stop_local_ai_server()
+
         if ENABLE_HEAD_TRACKING and not ENABLE_INTERACTION_DIAGNOSTIC:
             from robot.head_tracking import head_tracker
 
@@ -202,9 +238,21 @@ def shutdown_robot():
 
 
 def main():
+    start_connectivity_monitor()
     prepare_thinking_comments()
     prepare_speech_cache(WAKE_ONLY_RESPONSES)
+
+    internet_status = "online" if state.internet_connected else "offline"
+    speak(f"Internet status: {internet_status}.")
+
+    if not internet_access_allowed():
+        try:
+            start_local_ai_server()
+        except (OSError, RuntimeError) as exc:
+            print(f"⚠️ Local AI unavailable: {exc}")
+
     print("🤖 Ezra ready!\n")
+    speak("Ezra ready!")
     log_speaker_output_sanity()
     interaction_count = 0
 
@@ -213,6 +261,13 @@ def main():
 
             # Wait for Ezra or Hey Ezra.
             wake_text, wake_audio = wait_for_wake_word_with_audio()
+
+            command_timing = None
+            if ENABLE_COMMAND_TIMING_DIAGNOSTIC:
+                now = time.monotonic()
+                command_timing = CommandTiming(get_last_wake_detected_at() or now)
+                command_timing.mark("command_capture_finished", now)
+                set_active_command_timing(command_timing)
 
             interaction_count += 1
 
@@ -232,6 +287,7 @@ def main():
                     doa_diagnostic,
                 )
                 reset_idle_timer()
+                finish_command_timing(command_timing, "direction diagnostic")
                 continue
 
             # ITEM TEST 3: wake_word.py has already applied any qualified wake
@@ -270,6 +326,7 @@ def main():
                 )
                 set_emotion(EMOTION_STANDBY)
                 reset_idle_timer()
+                finish_command_timing(command_timing, "head diagnostic")
                 continue
 
             reset_idle_timer()
@@ -297,8 +354,9 @@ def main():
                         maybe_playback_diagnostic(wake_audio)
 
                     print("⏱️ Timeout waiting for command")
-                    command = acknowledge_wake_word()
+                    command = acknowledge_wake_word(command_timing=command_timing)
                     if command is None:
+                        finish_command_timing(command_timing, "no command")
                         continue
                     command_was_transcribed = True
                     thinking_started_at = time.monotonic()
@@ -312,7 +370,11 @@ def main():
                     # "Give me a second" before the listening acknowledgement.
                     thinking_started_at = time.monotonic()
                     command_was_transcribed = True
+                    if command_timing is not None:
+                        command_timing.mark("stt_started")
                     text = transcribe(audio)
+                    if command_timing is not None:
+                        command_timing.mark("stt_finished")
                     if VERBOSE_RUNTIME_LOGS:
                         print(f"🧪 STT raw text: [{text}]")
 
@@ -325,10 +387,12 @@ def main():
                         command = acknowledge_wake_word(
                             comment_cancel,
                             comment_thread,
+                            command_timing,
                         )
                         comment_cancel = None
                         comment_thread = None
                         if command is None:
+                            finish_command_timing(command_timing, "no command")
                             continue
                         thinking_started_at = time.monotonic()
 
@@ -345,9 +409,12 @@ def main():
                 stop_thinking_comment(comment_cancel, comment_thread)
                 set_emotion(EMOTION_STANDBY)
                 reset_idle_timer()
+                finish_command_timing(command_timing, "ignored command")
                 continue
 
             print(f"📝 Command: {command}")
+            if command_timing is not None:
+                command_timing.mark("command_ready")
 
             # ITEM TEST 2: show the transcribed command, but do not execute it
             # or produce any response or head movement.
@@ -355,6 +422,7 @@ def main():
                 stop_thinking_comment(comment_cancel, comment_thread)
                 display_command_text_diagnostic(command)
                 reset_idle_timer()
+                finish_command_timing(command_timing, "command-text diagnostic")
                 continue
 
             if not command_was_transcribed:
@@ -371,19 +439,30 @@ def main():
                 comment_cancel = None
                 comment_thread = None
 
+            if command_timing is not None:
+                command_timing.mark("processing_started")
             if handle_local_command(command):
+                if command_timing is not None:
+                    command_timing.mark(
+                        "processing_finished",
+                        command_timing.speech_requested_at or time.monotonic(),
+                    )
                 # Spoken local commands return to standby when TTS finishes.
                 # Silent commands, such as direct slide jumps or displaying
                 # answers, need the same reset explicitly.
                 set_emotion(EMOTION_STANDBY)
                 # Run optional audio replay diagnostics after Ezra responds.
                 maybe_playback_diagnostic()
+                finish_command_timing(command_timing, "local command")
                 continue
 
             # Send all other commands to Ezra's brain.
             if comment_cancel is None and not comment_was_started:
                 comment_cancel = threading.Event()
-                if ENABLE_THINKING_COMMENTS:
+                # Offline answers come from the local model. Avoid web-search
+                # flavored filler such as "Let me see what I can find," and
+                # keep an unavailable-local-model response immediate.
+                if ENABLE_THINKING_COMMENTS and internet_access_allowed():
                     elapsed_thinking = (
                         time.monotonic() - thinking_started_at
                         if thinking_started_at is not None
@@ -400,13 +479,28 @@ def main():
                 comment_cancel = threading.Event()
             try:
                 result = ask_ezra(command)
+                if command_timing is not None:
+                    command_timing.mark("processing_finished")
 
+            except InternetUnavailableError:
+                stop_thinking_comment(comment_cancel, comment_thread)
+                comment_cancel = None
+                comment_thread = None
+                set_emotion("confused")
+                speak(
+                    "Sorry, I'm not connected to the internet, "
+                    "so I can't answer that."
+                )
+                reset_idle_timer()
+                finish_command_timing(command_timing, "internet unavailable")
+                continue
             except Exception as e:
                 print(f"❌ Ezra brain error: {e}")
 
                 set_emotion("confused")
                 speak("I'm sorry. I had trouble answering that.")
                 reset_idle_timer()
+                finish_command_timing(command_timing, "AI error")
                 continue
             finally:
                 stop_thinking_comment(comment_cancel, comment_thread)
@@ -442,6 +536,7 @@ def main():
             maybe_playback_diagnostic()
 
             reset_idle_timer()
+            finish_command_timing(command_timing)
 
     except KeyboardInterrupt:
         pass
@@ -450,6 +545,7 @@ def main():
         print(f"\n❌ MAIN ERROR: {e}")
 
     finally:
+        stop_connectivity_monitor()
         shutdown_robot()
 
 

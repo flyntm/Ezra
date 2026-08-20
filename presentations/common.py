@@ -2,6 +2,8 @@
 
 import re
 
+from config import SCRIPTED_TTS_SENTENCE_SILENCE
+
 from .presenter import smile_and_pause, speak_with_head_motion
 
 INTRODUCTION_OPENING = (
@@ -21,6 +23,12 @@ INTRODUCTION_WARNING = (
 )
 
 INTRODUCTION_CLOSING = "Thanks for having me. I'm excited to be here!"
+
+INTRODUCTION_OFFLINE_NOTICE = (
+    "Oh... [Pause] I just realized that I don't have an internet connection. "
+    "Apparently, the cloud has drifted away. No worries—I'll dig through "
+    "my local memory and see what I can pull off."
+)
 
 NAME_ORIGIN_OPENING = (
     "My name comes from Ezra in the Bible; he was a priest, scribe, teacher, "
@@ -81,6 +89,7 @@ def present_name_origin(speak, smile=None, look_targets=None):
         speak,
         NAME_ORIGIN,
         look_targets=look_targets,
+        sentence_silence=SCRIPTED_TTS_SENTENCE_SILENCE,
     )
     if not interrupted:
         smile_and_pause(smile)
@@ -93,28 +102,21 @@ def present_introduction(
     look_left=None,
     look_right=None,
     look_targets=None,
+    offline=False,
 ):
     """Deliver Ezra's introduction through existing speech and robot controls."""
 
+    narration = INTRODUCTION
+    if offline:
+        narration = f"{narration} {INTRODUCTION_OFFLINE_NOTICE}"
     if speak_with_head_motion(
         speak,
-        INTRODUCTION_OPENING,
+        narration,
         look_left=look_left,
         look_right=look_right,
         look_targets=look_targets,
+        sentence_silence=SCRIPTED_TTS_SENTENCE_SILENCE,
     ):
-        return True
-    smile_and_pause(smile)
-    if speak_with_head_motion(
-        speak,
-        INTRODUCTION_WARNING,
-        look_left=look_right,
-        look_right=look_left,
-        look_targets=look_targets,
-    ):
-        return True
-    smile_and_pause(smile)
-    if speak(INTRODUCTION_CLOSING):
         return True
     smile_and_pause(smile)
     return False
