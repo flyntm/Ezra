@@ -6,15 +6,19 @@ from dataclasses import replace
 from pathlib import Path
 import zipfile
 
-from presentations import acts_lesson_one
-from presentations.acts_lesson_one import (
-    ActsLessonOneSession,
+from presentations import lesson_presentation
+from presentations.lesson_presentation import (
+    LessonPresentationSession,
     DECK_PATH,
+    discover_presentation,
     handle_active_command,
     is_rehearsal_request,
     is_start_request,
+    print_rehearsal,
     _parse_slide_number,
     requested_start_slide,
+    _SLIDE_JUMP_PATTERN,
+    _normalize_presentation_command,
 )
 from presentations.powerpoint import PowerPointDeck
 from presentations.browser_slideshow import render_pptx_html
@@ -26,6 +30,66 @@ from presentations.common import (
     present_name_origin,
 )
 from presentations.presenter import audience_look_targets, speak_with_head_motion
+
+
+class PresentationCommandPatternTests(unittest.TestCase):
+    def test_show_us_slide_of_the_presentation(self):
+        match = _SLIDE_JUMP_PATTERN.search(
+            "yeah ezra show us slide 8 of the presentation"
+        )
+
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group("number_after"), "8")
+
+    def test_rehearsal_output_is_readable_and_omits_debug_events(self):
+        deck = PowerPointDeck(
+            path=Path("lesson.pptx"),
+            notes=("", "A short narration. [Smile]"),
+            auto_advance=(False, True),
+            reveal_slides=(False, True),
+            question_numbers=(None, None),
+        )
+        lines = []
+
+        print_rehearsal(deck, output=lines.append, width=60)
+        rendered = "\n".join(lines)
+
+        self.assertIn("PRESENTATION REHEARSAL", rendered)
+        self.assertIn("SLIDE 1", rendered)
+        self.assertIn("(No speaker notes.)", rendered)
+        self.assertIn("SLIDE 2 — ANSWER", rendered)
+        self.assertIn("A short narration. [Smile] [NEXT SLIDE]", rendered)
+        self.assertNotIn("Action: Smile", rendered)
+        self.assertNotIn("Advance: Automatic", rendered)
+        self.assertNotIn("[presentation]", rendered)
+        self.assertNotIn("[slides]", rendered)
+
+    def test_go_to_slide_of_the_presentation(self):
+        match = _SLIDE_JUMP_PATTERN.search("go to slide 8 of the presentation")
+
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group("number_after"), "8")
+
+    def test_sign_number_is_normalized_to_slide_number(self):
+        command = _normalize_presentation_command(
+            "go to sign 2 and explain"
+        )
+
+        self.assertEqual(command, "go to slide 2 and explain")
+
+    def test_stt_and_its_suffix_is_treated_as_and_explain(self):
+        command = "it is right go to slide two and its"
+        normalized = _normalize_presentation_command(command)
+        navigation = lesson_presentation._EXPLAIN_SUFFIX_PATTERN.sub(
+            "", normalized
+        )
+
+        self.assertTrue(
+            lesson_presentation._EXPLAIN_SUFFIX_PATTERN.search(normalized)
+        )
+        match = _SLIDE_JUMP_PATTERN.search(navigation)
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group("number_after"), "two")
 
 
 class FakeSlideshow:
@@ -80,6 +144,30 @@ class PresenterMotionTests(unittest.TestCase):
         self.assertTrue(movement_stopped.is_set())
 
 class PowerPointDeckTests(unittest.TestCase):
+    def test_discovers_the_only_presentation_in_a_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            expected = Path(directory) / "talk.pptx"
+            expected.touch()
+            self.assertEqual(discover_presentation(directory), expected)
+
+    def test_multiple_presentations_raise_a_clear_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "first.pptx").touch()
+            (Path(directory) / "second.PPTX").touch()
+            with self.assertRaisesRegex(
+                lesson_presentation.PresentationError,
+                "More than one PowerPoint presentation.*first.pptx.*second.PPTX",
+            ):
+                discover_presentation(directory)
+
+    def test_missing_presentation_raises_a_clear_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(
+                lesson_presentation.PresentationError,
+                "No PowerPoint presentation",
+            ):
+                discover_presentation(directory)
+
     def test_lesson_deck_has_speaker_notes_for_every_slide(self):
         deck = PowerPointDeck.load(DECK_PATH)
         self.assertEqual(deck.slide_count, 17)
@@ -166,9 +254,10 @@ class ActsSessionTests(unittest.TestCase):
             callbacks.get("on_playback_complete", lambda: None)()
             return False
 
-        self.session = ActsLessonOneSession(
+        self.session = LessonPresentationSession(
             speak,
             self.slides,
+            deck_path=DECK_PATH,
         )
         self.session.deck = replace(
             self.session.deck,
@@ -257,6 +346,18 @@ class ActsSessionTests(unittest.TestCase):
         self.assertEqual(self.slides.actions, ["start"])
         self.assertEqual(self.spoken, [])
 
+    def test_slide_without_speaker_notes_displays_without_narration(self):
+        self.session.deck = replace(
+            self.session.deck,
+            notes=("",) + self.session.deck.notes[1:],
+        )
+
+        self.assertFalse(self.session.start())
+
+        self.assertTrue(self.session.active)
+        self.assertEqual(self.slides.actions, ["start"])
+        self.assertEqual(self.spoken, [])
+
     def test_marker_advances_only_after_playback_completion(self):
         self.session.deck = replace(
             self.session.deck,
@@ -270,8 +371,8 @@ class ActsSessionTests(unittest.TestCase):
 
     def test_explain_this_slide_narrates_current_slide(self):
         self.session.start()
-        acts_lesson_one._session = self.session
-        self.addCleanup(setattr, acts_lesson_one, "_session", None)
+        lesson_presentation._session = self.session
+        self.addCleanup(setattr, lesson_presentation, "_session", None)
         self.assertTrue(handle_active_command("go to slide two", self.session.speak))
         self.assertEqual(len(self.spoken), 1)
         self.assertTrue(
@@ -281,9 +382,10 @@ class ActsSessionTests(unittest.TestCase):
         self.assertIn("three decades", self.spoken[-1])
 
     def test_marker_does_not_advance_without_playback_completion(self):
-        session = ActsLessonOneSession(
+        session = LessonPresentationSession(
             lambda text, **callbacks: callbacks["on_playback_start"]() or False,
             self.slides,
+            deck_path=DECK_PATH,
         )
         session.deck = replace(
             session.deck,
@@ -298,7 +400,9 @@ class ActsSessionTests(unittest.TestCase):
             callbacks.get("on_playback_start", lambda: None)()
             return True
 
-        session = ActsLessonOneSession(interrupted_speak, self.slides)
+        session = LessonPresentationSession(
+            interrupted_speak, self.slides, deck_path=DECK_PATH
+        )
         session.deck = replace(
             session.deck,
             auto_advance=(True,) + session.deck.auto_advance[1:],
@@ -329,14 +433,14 @@ class ActsSessionTests(unittest.TestCase):
         self.assertEqual(spoken, [])
 
     def test_navigation_command_starts_inactive_presentation_then_runs(self):
-        self.addCleanup(setattr, acts_lesson_one, "_session", None)
+        self.addCleanup(setattr, lesson_presentation, "_session", None)
 
         def start_for_test(speak, rehearsal=False, slide_number=1, narrate=True):
-            acts_lesson_one._session = self.session
+            lesson_presentation._session = self.session
             self.session.start(slide_number=slide_number, narrate=narrate)
 
         with patch.object(
-            acts_lesson_one,
+            lesson_presentation,
             "start_presentation",
             side_effect=start_for_test,
         ) as start:
@@ -349,8 +453,8 @@ class ActsSessionTests(unittest.TestCase):
 
     def test_jump_to_slide_does_not_read_script(self):
         self.session.start()
-        acts_lesson_one._session = self.session
-        self.addCleanup(setattr, acts_lesson_one, "_session", None)
+        lesson_presentation._session = self.session
+        self.addCleanup(setattr, lesson_presentation, "_session", None)
         spoken_before_jump = list(self.spoken)
         self.assertTrue(handle_active_command("go to slide 2", self.session.speak))
         self.assertEqual(self.slides.actions[-1], ("go_to", 1))
@@ -359,8 +463,8 @@ class ActsSessionTests(unittest.TestCase):
 
     def test_jump_to_slide_and_explain_reads_script(self):
         self.session.start()
-        acts_lesson_one._session = self.session
-        self.addCleanup(setattr, acts_lesson_one, "_session", None)
+        lesson_presentation._session = self.session
+        self.addCleanup(setattr, lesson_presentation, "_session", None)
         self.assertTrue(
             handle_active_command("go to slide 2 and explain", self.session.speak)
         )
@@ -369,8 +473,8 @@ class ActsSessionTests(unittest.TestCase):
 
     def test_previous_and_explain_reads_previous_slide_script(self):
         self.session.start()
-        acts_lesson_one._session = self.session
-        self.addCleanup(setattr, acts_lesson_one, "_session", None)
+        lesson_presentation._session = self.session
+        self.addCleanup(setattr, lesson_presentation, "_session", None)
         handle_active_command("go to slide 3", self.session.speak)
         spoken_before_previous = len(self.spoken)
         self.assertTrue(
@@ -381,8 +485,8 @@ class ActsSessionTests(unittest.TestCase):
 
     def test_jump_to_answer_slide_displays_answers_without_reading(self):
         self.session.start()
-        acts_lesson_one._session = self.session
-        self.addCleanup(setattr, acts_lesson_one, "_session", None)
+        lesson_presentation._session = self.session
+        self.addCleanup(setattr, lesson_presentation, "_session", None)
         spoken_before_jump = list(self.spoken)
         self.assertTrue(handle_active_command("go to slide 4", self.session.speak))
         self.assertEqual(self.slides.actions[-2:], [("go_to", 3), "reveal"])
@@ -400,19 +504,19 @@ class ActsSessionTests(unittest.TestCase):
 
     def test_show_numbered_slide_phrasing_is_claimed(self):
         self.session.start()
-        acts_lesson_one._session = self.session
-        self.addCleanup(setattr, acts_lesson_one, "_session", None)
+        lesson_presentation._session = self.session
+        self.addCleanup(setattr, lesson_presentation, "_session", None)
         self.assertTrue(handle_active_command("show the 4th slide", self.session.speak))
         self.assertEqual(self.session.slide_index, 3)
         self.assertFalse(handle_active_command("fourth slide please", self.session.speak))
 
     def test_show_fifth_slide_restores_presentation_from_bible_display(self):
         self.session.start()
-        acts_lesson_one._session = self.session
-        self.addCleanup(setattr, acts_lesson_one, "_session", None)
+        lesson_presentation._session = self.session
+        self.addCleanup(setattr, lesson_presentation, "_session", None)
 
         with patch(
-            "presentations.acts_lesson_one.close_bible_display"
+            "presentations.lesson_presentation.close_bible_display"
         ) as close_display:
             handled = handle_active_command(
                 "show the fifth slide",
@@ -425,8 +529,8 @@ class ActsSessionTests(unittest.TestCase):
 
     def test_spoken_ordinal_jump_and_current_slide_narration(self):
         self.session.start()
-        acts_lesson_one._session = self.session
-        self.addCleanup(setattr, acts_lesson_one, "_session", None)
+        lesson_presentation._session = self.session
+        self.addCleanup(setattr, lesson_presentation, "_session", None)
         self.assertTrue(handle_active_command("go to slide number two", self.session.speak))
         self.assertEqual(len(self.spoken), 1)
         self.assertTrue(
@@ -440,8 +544,8 @@ class ActsSessionTests(unittest.TestCase):
 
     def test_question_jump_uses_label_instead_of_slide_number(self):
         self.session.start()
-        acts_lesson_one._session = self.session
-        self.addCleanup(setattr, acts_lesson_one, "_session", None)
+        lesson_presentation._session = self.session
+        self.addCleanup(setattr, lesson_presentation, "_session", None)
         spoken_before_jump = list(self.spoken)
         self.assertTrue(handle_active_command("show question 4", self.session.speak))
         self.assertEqual(self.slides.actions[-1], ("go_to", 8))
@@ -450,16 +554,16 @@ class ActsSessionTests(unittest.TestCase):
 
     def test_question_jump_accepts_spoken_number_word(self):
         self.session.start()
-        acts_lesson_one._session = self.session
-        self.addCleanup(setattr, acts_lesson_one, "_session", None)
+        lesson_presentation._session = self.session
+        self.addCleanup(setattr, lesson_presentation, "_session", None)
         self.assertTrue(handle_active_command("show question seven", self.session.speak))
         self.assertEqual(self.slides.actions[-1], ("go_to", 13))
         self.assertEqual(self.session.slide_index, 13)
 
     def test_question_jump_and_explain_reads_script(self):
         self.session.start()
-        acts_lesson_one._session = self.session
-        self.addCleanup(setattr, acts_lesson_one, "_session", None)
+        lesson_presentation._session = self.session
+        self.addCleanup(setattr, lesson_presentation, "_session", None)
         spoken_before_jump = len(self.spoken)
         self.assertTrue(
             handle_active_command("show question four and explain", self.session.speak)
@@ -469,8 +573,8 @@ class ActsSessionTests(unittest.TestCase):
 
     def test_plural_answers_reveals_answer(self):
         self.session.start()
-        acts_lesson_one._session = self.session
-        self.addCleanup(setattr, acts_lesson_one, "_session", None)
+        lesson_presentation._session = self.session
+        self.addCleanup(setattr, lesson_presentation, "_session", None)
         handle_active_command("go to slide 3", self.session.speak)
         self.assertTrue(handle_active_command("show us the answers", self.session.speak))
         self.assertEqual(self.slides.actions[-2:], [("go_to", 3), "reveal"])
@@ -480,8 +584,8 @@ class ActsSessionTests(unittest.TestCase):
 
     def test_answers_please_advances_reveals_and_reads(self):
         self.session.start()
-        acts_lesson_one._session = self.session
-        self.addCleanup(setattr, acts_lesson_one, "_session", None)
+        lesson_presentation._session = self.session
+        self.addCleanup(setattr, lesson_presentation, "_session", None)
         handle_active_command("go to slide three", self.session.speak)
         self.assertTrue(handle_active_command("the answers please", self.session.speak))
         self.assertEqual(self.slides.actions[-2:], [("go_to", 3), "reveal"])
@@ -490,8 +594,8 @@ class ActsSessionTests(unittest.TestCase):
 
     def test_answer_is_please_transcription_reveals_and_reads(self):
         self.session.start()
-        acts_lesson_one._session = self.session
-        self.addCleanup(setattr, acts_lesson_one, "_session", None)
+        lesson_presentation._session = self.session
+        self.addCleanup(setattr, lesson_presentation, "_session", None)
         handle_active_command("go to slide three", self.session.speak)
         self.assertTrue(
             handle_active_command("the answer is please", self.session.speak)
@@ -509,7 +613,7 @@ class ActsSessionTests(unittest.TestCase):
             options.get("on_playback_complete", lambda: None)()
             return False
 
-        session = ActsLessonOneSession(speak, self.slides)
+        session = LessonPresentationSession(speak, self.slides, deck_path=DECK_PATH)
         session.deck = replace(
             session.deck,
             auto_advance=(False,) * session.deck.slide_count,
@@ -522,8 +626,8 @@ class ActsSessionTests(unittest.TestCase):
 
     def test_display_answers_reveals_without_reading_script(self):
         self.session.start()
-        acts_lesson_one._session = self.session
-        self.addCleanup(setattr, acts_lesson_one, "_session", None)
+        lesson_presentation._session = self.session
+        self.addCleanup(setattr, lesson_presentation, "_session", None)
         handle_active_command("go to slide number third", self.session.speak)
         spoken_before_reveal = list(self.spoken)
         self.assertTrue(handle_active_command("display the answers", self.session.speak))
@@ -534,8 +638,8 @@ class ActsSessionTests(unittest.TestCase):
 
     def test_display_answers_and_explain_reads_script(self):
         self.session.start()
-        acts_lesson_one._session = self.session
-        self.addCleanup(setattr, acts_lesson_one, "_session", None)
+        lesson_presentation._session = self.session
+        self.addCleanup(setattr, lesson_presentation, "_session", None)
         handle_active_command("go to slide three", self.session.speak)
         spoken_before_reveal = len(self.spoken)
         self.assertTrue(
@@ -546,8 +650,8 @@ class ActsSessionTests(unittest.TestCase):
 
     def test_out_of_range_slide_reports_deck_size(self):
         self.session.start()
-        acts_lesson_one._session = self.session
-        self.addCleanup(setattr, acts_lesson_one, "_session", None)
+        lesson_presentation._session = self.session
+        self.addCleanup(setattr, lesson_presentation, "_session", None)
         self.assertTrue(handle_active_command("go to slide 18", self.session.speak))
         self.assertEqual(self.spoken[-1], "This presentation has 17 slides.")
         self.assertEqual(self.session.slide_index, 0)

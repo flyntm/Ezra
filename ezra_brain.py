@@ -8,6 +8,7 @@ import requests
 from openai import OpenAI
 from config import *
 from network_status import internet_access_allowed
+from lesson_context import augment_question
 
 # Load environment variables
 load_dotenv(Path(__file__).parent / ".env", override=True)
@@ -278,6 +279,12 @@ def ask_ezra(user_text, on_sentence=None):
     # Trim history
     conversation_history = conversation_history[-MAX_HISTORY:]
 
+    # Retrieval context is intentionally transient: retain the user's original
+    # words in conversation memory, but give this request relevant lesson text,
+    # PowerPoint notes, and Scripture with explicit source labels.
+    request_messages = [dict(message) for message in conversation_history]
+    request_messages[-1]["content"] = augment_question(user_text)
+
     provider = os.getenv("EZRA_AI_PROVIDER", AI_PROVIDER).strip().lower()
 
     if provider == "openai":
@@ -285,28 +292,28 @@ def ask_ezra(user_text, on_sentence=None):
             if ENABLE_AI_RESPONSE_STREAMING and on_sentence is not None:
                 try:
                     data = _ask_openai_streaming(
-                        conversation_history,
+                        request_messages,
                         on_sentence,
                     )
                 except Exception:
                     # Falling back is safe only before any sentence was handed
                     # to playback; the streaming helper otherwise returns a
                     # partial result instead of raising.
-                    text = _ask_openai(conversation_history)
+                    text = _ask_openai(request_messages)
                     data = _parse_brain_response(text)
             else:
-                text = _ask_openai(conversation_history)
+                text = _ask_openai(request_messages)
                 data = _parse_brain_response(text)
         else:
             try:
-                text = _ask_local(conversation_history)
+                text = _ask_local(request_messages)
                 data = _parse_brain_response(text)
             except requests.RequestException as exc:
                 raise InternetUnavailableError(
                     "Neither the internet nor the local AI is available"
                 ) from exc
     elif provider == "local":
-        text = _ask_local(conversation_history)
+        text = _ask_local(request_messages)
         data = _parse_brain_response(text)
     else:
         raise ValueError(f"Unsupported AI provider: {provider}")

@@ -111,6 +111,7 @@ class RobotEmotionController:
         self._next_standby_gaze_at = 0.0
         self._next_listening_gaze_at = 0.0
         self._external_gaze = None
+        self._smile_wink_active = False
         self._sound_gaze_suppressed_until = 0.0
 
     @property
@@ -253,6 +254,11 @@ class RobotEmotionController:
         with self._lock:
             self._external_gaze = None
             eyes.clear_gaze_override()
+
+    def set_smile_wink_active(self, active):
+        """Prevent the happy animation from overriding a scripted wink."""
+        with self._lock:
+            self._smile_wink_active = bool(active)
 
     def is_sound_gaze_suppressed(self):
         """Backward-compatible alias for the shared DoA motion-noise guard."""
@@ -489,6 +495,10 @@ class RobotEmotionController:
         return center_h + h_offset, center_v + v_offset
 
     def _tick_happy(self, now, t):
+        if self._smile_wink_active:
+            eyes.gaze(90, 86)
+            self._mouth_smile()
+            return
         h = 90 + 9 * math.sin(t * 1.1)
         v = 86 + 3 * math.sin(t * 1.7)
         eyes.gaze(h, v)
@@ -866,6 +876,10 @@ def set_external_gaze(horizontal, vertical=86.0):
 
 def clear_external_gaze():
     return _default_controller.clear_external_gaze()
+
+
+def set_smile_wink_active(active):
+    return _default_controller.set_smile_wink_active(active)
 
 
 def is_sound_gaze_suppressed():

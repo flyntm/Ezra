@@ -1,0 +1,11 @@
+#!/bin/sh
+
+# Keep the generated command reference synchronized regardless of whether a
+# commit is started locally on the Pi or remotely by the Mac backup script.
+set -eu
+
+project_root=$(git rev-parse --show-toplevel)
+cd "$project_root"
+
+python3 tools/build_command_reference.py
+git add -- EZRA_COMMANDS.md

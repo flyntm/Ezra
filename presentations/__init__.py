@@ -6,7 +6,7 @@ from .common import (
     present_introduction,
     present_name_origin,
 )
-from .acts_lesson_one import (
+from .lesson_presentation import (
     handle_active_command as handle_presentation_command,
     is_rehearsal_request,
     is_start_request as is_presentation_request,

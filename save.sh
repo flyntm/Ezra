@@ -28,6 +28,7 @@ if git rev-parse -q --verify "refs/tags/$milestone_tag" >/dev/null; then
 fi
 
 # Add all changes
+python3 tools/build_command_reference.py
 git add .
 
 # Ask for commit message

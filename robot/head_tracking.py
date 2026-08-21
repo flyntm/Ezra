@@ -53,6 +53,7 @@ class HeadTracker:
     def __init__(self):
         self._head_cal = calibration.load_cal()["head"]
         self._current_yaw = 0.0
+        self._center_hold = False
         # Presentation movement runs in a background thread. Serialize every
         # head command so centering, speaker tracking, and audience motion can
         # never issue competing servo positions.
@@ -163,6 +164,11 @@ class HeadTracker:
             stop_event=stop_event,
         )
 
+    def set_center_hold(self, active):
+        """Block audience turns while a scripted centered gesture is active."""
+        with self._motion_lock:
+            self._center_hold = bool(active)
+
     def _turn_by_correction(
         self,
         correction,
@@ -171,6 +177,8 @@ class HeadTracker:
         announce=True,
         stop_event=None,
     ):
+        if self._center_hold:
+            return False
         announce = announce and VERBOSE_RUNTIME_LOGS
         if abs(correction) <= HEAD_TRACKING_CENTER_DEADBAND_DEGREES:
             if announce:

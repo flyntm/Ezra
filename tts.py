@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import os
 from pathlib import Path
+import random
 import re
 import select
 import subprocess
@@ -18,7 +19,7 @@ import numpy as np
 import sounddevice as sd
 
 from config import *
-from ezra_emotion import set_emotion, set_talk_level
+from ezra_emotion import set_emotion, set_talk_level, set_temporary_emotion
 from mouth_sync import build_mouth_envelope
 from persistent_piper import PersistentPiper
 from respeaker_io import create_respeaker_or_raise
@@ -423,11 +424,19 @@ def _split_tts_text(text, max_chars=None):
 
 def _render_speech_unit(speech_unit, output_file, sentence_silence=None):
     """Render one chunk to its own file for look-ahead synthesis."""
-    text, emphasized, _pause_after = speech_unit
+    text, emphasized, _pause_after, _action_after = speech_unit
     length_scale = TTS_LENGTH_SCALE
-    if emphasized:
+    humor = emphasized in ("humor", "humor_emphasis")
+    if emphasized is True:
         length_scale *= TTS_EMPHASIS_LENGTH_SCALE_MULTIPLIER
         print(f"[tts] emphasis={text!r}")
+    elif humor:
+        length_scale *= (
+            TTS_HUMOR_EMPHASIS_LENGTH_SCALE_MULTIPLIER
+            if emphasized == "humor_emphasis"
+            else TTS_HUMOR_LENGTH_SCALE_MULTIPLIER
+        )
+        print(f"[tts] humor={text!r}")
     if generate_speech_file(
         text,
         output_file,
@@ -439,18 +448,45 @@ def _render_speech_unit(speech_unit, output_file, sentence_silence=None):
 
 
 def _split_emphasis_segments(text):
-    """Return clean text segments tagged by exact [Emph] markers."""
+    """Return clean text segments tagged for emphasis or humorous delivery."""
     segments = []
     position = 0
-    pattern = re.compile(r"\[Emph\](.*?)\[/Emph\]", re.DOTALL)
+    pattern = re.compile(
+        r"\[(?P<tag>Emph|Humor)\](?P<text>.*?)\[/(?P=tag)\]",
+        re.DOTALL | re.IGNORECASE,
+    )
 
     for match in pattern.finditer(str(text)):
         normal = str(text)[position : match.start()].strip()
-        emphasized = match.group(1).strip()
+        emphasized = match.group("text").strip()
         if normal:
             segments.append((normal, False))
         if emphasized:
-            segments.append((emphasized, True))
+            if match.group("tag").casefold() == "humor":
+                # Humans commonly distinguish a punchline through timing and
+                # stress rather than shifting the whole sentence's pitch. Treat
+                # the final comma/semicolon/dash clause as the emphasized beat.
+                punchline = re.match(
+                    r"^(?P<setup>.*[,;—–]\s+)(?P<punchline>.+)$",
+                    emphasized,
+                    flags=re.DOTALL,
+                )
+                if punchline:
+                    segments.append((punchline.group("setup").strip(), "humor"))
+                    segments.append(
+                        (punchline.group("punchline").strip(), "humor_emphasis")
+                    )
+                else:
+                    words = emphasized.split()
+                    split_at = max(1, len(words) - min(3, len(words)))
+                    setup = " ".join(words[:split_at]).strip()
+                    punch = " ".join(words[split_at:]).strip()
+                    if setup:
+                        segments.append((setup, "humor"))
+                    if punch:
+                        segments.append((punch, "humor_emphasis"))
+            else:
+                segments.append((emphasized, True))
         position = match.end()
 
     remainder = str(text)[position:].strip()
@@ -462,7 +498,9 @@ def _split_emphasis_segments(text):
     # containing only a period or comma.
     cleaned = []
     for segment, emphasized in segments or [(str(text), False)]:
-        segment = segment.replace("[Emph]", "").replace("[/Emph]", "").strip()
+        segment = re.sub(
+            r"\[/?(?:Emph|Humor)\]", "", segment, flags=re.IGNORECASE
+        ).strip()
         if not segment:
             continue
         if cleaned and not re.search(r"\w", segment):
@@ -497,19 +535,118 @@ def _split_clause_pause_segments(text):
 
 
 def _split_explicit_pause_segments(text):
-    """Remove [Pause] markers and attach silence to the preceding text."""
+    """Remove pause markers and attach their silence to the preceding text."""
 
-    pieces = re.split(r"\s*\[Pause\]\s*", str(text), flags=re.IGNORECASE)
+    pieces = re.split(
+        r"\s*(\[(?:Pause|HumorPause)\])\s*",
+        str(text),
+        flags=re.IGNORECASE,
+    )
     segments = []
-    for index, piece in enumerate(pieces):
+    for piece in pieces:
         cleaned = piece.strip()
         if not cleaned:
             continue
-        pause_after = (
-            TTS_EXPLICIT_PAUSE_SECONDS if index < len(pieces) - 1 else 0.0
+        if re.fullmatch(
+            r"\[(?:Pause|HumorPause)\]", cleaned, flags=re.IGNORECASE
+        ):
+            if segments:
+                pause_seconds = (
+                    TTS_HUMOR_PAUSE_SECONDS
+                    if cleaned.casefold() == "[humorpause]"
+                    else TTS_EXPLICIT_PAUSE_SECONDS
+                )
+                previous_text, _previous_pause = segments[-1]
+                segments[-1] = (previous_text, pause_seconds)
+            continue
+        segments.append((cleaned, 0.0))
+    return segments or [(str(text), 0.0)]
+
+
+def _split_script_action_segments(text):
+    """Remove exact action markers and attach each action to preceding prose."""
+
+    prepared = re.sub(
+        r"\s*\[Humor\]\s*",
+        " [HumorPause] [Humor]",
+        str(text),
+        flags=re.IGNORECASE,
+    )
+    pieces = re.split(
+        r"\s*(\[Smile\])\s*",
+        prepared,
+        flags=re.IGNORECASE,
+    )
+    segments = []
+    pending_text = ""
+    for piece in pieces:
+        if not piece:
+            continue
+        if re.fullmatch(r"\[Smile\]", piece, flags=re.IGNORECASE):
+            segments.append((pending_text.strip(), "smile"))
+            pending_text = ""
+        else:
+            pending_text = f"{pending_text} {piece}".strip()
+    if pending_text or not segments:
+        segments.append((pending_text.strip(), None))
+    return segments
+
+
+def _append_smile_response(speech_units, action_start):
+    """Append one randomly selected response for a parsed [Smile] marker."""
+
+    response = random.choice(TTS_SMILE_RESPONSES)
+    if response:
+        if len(speech_units) > action_start:
+            unit = speech_units[-1]
+            speech_units[-1] = (*unit[:3], "pause")
+        else:
+            speech_units.append(("", False, 0.0, "pause"))
+        speech_units.append((response, False, 0.0, "smile"))
+    elif len(speech_units) > action_start:
+        unit = speech_units[-1]
+        speech_units[-1] = (*unit[:3], "smile")
+    else:
+        speech_units.append(("", False, 0.0, "smile"))
+
+
+def _perform_smile_wink():
+    """Run one slow [Smile] wink without making TTS depend on robot startup."""
+    try:
+        from robot import eyelids
+
+        eyelids.wink_left(
+            times=1,
+            closed_seconds=TTS_SMILE_WINK_CLOSED_SECONDS,
         )
-        segments.append((cleaned, pause_after))
-    return segments or [(str(text).replace("[Pause]", "").strip(), 0.0)]
+    except Exception as exc:
+        print(f"⚠️ Smile wink unavailable: {exc}")
+
+
+def _set_smile_head_hold(active):
+    """Keep presentation head motion centered through the end of speech."""
+    try:
+        from robot.head_tracking import head_tracker
+
+        head_tracker.set_center_hold(active)
+        if active:
+            head_tracker.center()
+    except Exception as exc:
+        print(f"⚠️ Smile head hold unavailable: {exc}")
+
+
+def _set_smile_gesture_lock(active):
+    """Hold the eyes forward and protect the eyelid during [Smile]."""
+    try:
+        from robot import robot_emotions
+
+        robot_emotions.set_smile_wink_active(active)
+        if active:
+            robot_emotions.set_external_gaze(90, 86)
+        else:
+            robot_emotions.clear_external_gaze()
+    except Exception as exc:
+        print(f"⚠️ Smile gesture lock unavailable: {exc}")
 
 
 def _apply_pronunciation_overrides(text):
@@ -595,12 +732,25 @@ def _generate_combined_speech_file(
     """Synthesize marked segments and join them with controlled pauses."""
     with tempfile.TemporaryDirectory(prefix="ezra-speech-") as directory:
         rendered = []
-        for index, (text, emphasized, _pause_after) in enumerate(speech_units):
+        for index, (
+            text,
+            emphasized,
+            _pause_after,
+            _action_after,
+        ) in enumerate(speech_units):
             path = Path(directory) / f"segment-{index}.wav"
             length_scale = TTS_LENGTH_SCALE
-            if emphasized:
+            humor = emphasized in ("humor", "humor_emphasis")
+            if emphasized is True:
                 length_scale *= TTS_EMPHASIS_LENGTH_SCALE_MULTIPLIER
                 print(f"[tts] emphasis={text!r}")
+            elif humor:
+                length_scale *= (
+                    TTS_HUMOR_EMPHASIS_LENGTH_SCALE_MULTIPLIER
+                    if emphasized == "humor_emphasis"
+                    else TTS_HUMOR_LENGTH_SCALE_MULTIPLIER
+                )
+                print(f"[tts] humor={text!r}")
             if not generate_speech_file(
                 text,
                 path,
@@ -635,7 +785,7 @@ def _generate_combined_speech_file(
                 samples = np.frombuffer(frames, dtype="<i2")
                 channels = parameters.nchannels
                 sample_frames = samples.reshape(-1, channels)
-                if speech_units[index][1]:
+                if speech_units[index][1] in (True, "humor_emphasis"):
                     sample_frames = np.clip(
                         sample_frames.astype(np.float32) * TTS_EMPHASIS_GAIN,
                         -32768,
@@ -794,7 +944,7 @@ def speak(
     note_speech_requested()
 
     terminal_text = re.sub(
-        r"\s*\[Pause\]\s*",
+        r"\s*\[/?(?:Pause|Smile|Humor)\]\s*",
         " ",
         str(text),
         flags=re.IGNORECASE,
@@ -813,6 +963,7 @@ def speak(
     keyboard_skip = threading.Event()
     interrupted_by_stop = False
     skipped_by_keyboard = False
+    smile_head_held = False
 
     if (
         ENABLE_MID_RESPONSE_STOP
@@ -860,31 +1011,38 @@ def speak(
 
     try:
         speech_units = []
-        for segment, emphasized in _split_emphasis_segments(text):
-            for explicit_text, explicit_pause in _split_explicit_pause_segments(
-                segment
-            ):
-                clauses = _split_clause_pause_segments(explicit_text)
-                for clause_index, (clause, pause_after) in enumerate(clauses):
-                    if clause_index == len(clauses) - 1:
-                        pause_after = max(pause_after, explicit_pause)
-                    chunks = _split_tts_text(clause, max_chars=chunk_max_chars)
-                    speech_units.extend(
-                        (
-                            chunk,
-                            emphasized,
-                            pause_after if index == len(chunks) - 1 else 0.0,
+        for action_text, action_after in _split_script_action_segments(text):
+            action_start = len(speech_units)
+            for segment, emphasized in _split_emphasis_segments(action_text):
+                for explicit_text, explicit_pause in _split_explicit_pause_segments(
+                    segment
+                ):
+                    clauses = _split_clause_pause_segments(explicit_text)
+                    for clause_index, (clause, pause_after) in enumerate(clauses):
+                        if clause_index == len(clauses) - 1:
+                            pause_after = max(pause_after, explicit_pause)
+                        chunks = _split_tts_text(clause, max_chars=chunk_max_chars)
+                        speech_units.extend(
+                            (
+                                chunk,
+                                emphasized,
+                                pause_after if index == len(chunks) - 1 else 0.0,
+                                None,
+                            )
+                            for index, chunk in enumerate(chunks)
                         )
-                        for index, chunk in enumerate(chunks)
-                    )
+            if action_after is not None:
+                if action_after == "smile":
+                    _append_smile_response(speech_units, action_start)
         combined_audio_file = None
         speech_character_count = sum(len(unit[0]) for unit in speech_units)
         if (
             speech_character_count <= TTS_CHUNK_MAX_CHARS
             and len(speech_units) > 1
+            and all(unit[3] is None for unit in speech_units)
             and any(
                 emphasized or pause_after > 0
-                for _, emphasized, pause_after in speech_units
+                for _, emphasized, pause_after, _ in speech_units
             )
         ):
             combined_audio_file = "temp.wav"
@@ -893,7 +1051,7 @@ def speak(
                 combined_audio_file,
                 sentence_silence=sentence_silence,
             ):
-                speech_units = [("", False, 0.0)]
+                speech_units = [("", False, 0.0, None)]
             else:
                 # Preserve narration even if WAV joining is unavailable.
                 print("⚠️ TTS audio joining failed; using segment playback")
@@ -907,6 +1065,7 @@ def speak(
             combined_audio_file is None
             and audio_file is None
             and len(speech_units) > 1
+            and all(unit[0] for unit in speech_units)
         )
         if stream_chunks:
             streaming_directory = tempfile.TemporaryDirectory(
@@ -924,7 +1083,12 @@ def speak(
                 sentence_silence,
             )
 
-        for index, (chunk, emphasized, _pause_after) in enumerate(speech_units):
+        for index, (
+            chunk,
+            emphasized,
+            _pause_after,
+            action_after,
+        ) in enumerate(speech_units):
             if stop_event.is_set():
                 if keyboard_skip.is_set():
                     skipped_by_keyboard = True
@@ -950,17 +1114,25 @@ def speak(
                         next_path,
                         sentence_silence,
                     )
-            if chunk_audio_file is None:
+            if chunk_audio_file is None and chunk:
                 chunk_audio_file = (
                     audio_file
                     if len(speech_units) == 1 and not emphasized
                     else None
                 )
-            if chunk_audio_file is None:
+            if chunk_audio_file is None and chunk:
                 length_scale = TTS_LENGTH_SCALE
-                if emphasized:
+                humor = emphasized in ("humor", "humor_emphasis")
+                if emphasized is True:
                     length_scale *= TTS_EMPHASIS_LENGTH_SCALE_MULTIPLIER
                     print(f"[tts] emphasis={chunk!r}")
+                elif humor:
+                    length_scale *= (
+                        TTS_HUMOR_EMPHASIS_LENGTH_SCALE_MULTIPLIER
+                        if emphasized == "humor_emphasis"
+                        else TTS_HUMOR_LENGTH_SCALE_MULTIPLIER
+                    )
+                    print(f"[tts] humor={chunk!r}")
                 if not generate_speech_file(
                     chunk,
                     length_scale=length_scale,
@@ -970,31 +1142,37 @@ def speak(
                     break
                 chunk_audio_file = "temp.wav"
 
-            try:
-                mouth_envelope, mouth_frame_seconds = build_mouth_envelope(
-                    os.fspath(chunk_audio_file)
-                )
-            except Exception as e:
-                print(f"⚠️ TTS mouth sync disabled for this chunk: {e}")
-                mouth_envelope = np.ones(1, dtype=np.float32) * 0.5
-                mouth_frame_seconds = max(0.01, TTS_MOUTH_SYNC_WINDOW_SECONDS)
-
-            if TTS_START_DELAY > 0:
-                time.sleep(TTS_START_DELAY)
-            set_emotion(EMOTION_TALKING)
-
-            note_speech_started()
-
-            if not playback_started and on_playback_start is not None:
+            # Successful combined synthesis replaces the text units with one
+            # empty placeholder whose audio lives in combined_audio_file. Play
+            # that file; an empty unit with no audio is the only silent case.
+            if not chunk and chunk_audio_file is None:
+                playback_result = False
+            else:
                 try:
-                    on_playback_start()
+                    mouth_envelope, mouth_frame_seconds = build_mouth_envelope(
+                        os.fspath(chunk_audio_file)
+                    )
                 except Exception as e:
-                    print(f"⚠️ TTS playback-start callback failed: {e}")
-                playback_started = True
+                    print(f"⚠️ TTS mouth sync disabled for this chunk: {e}")
+                    mouth_envelope = np.ones(1, dtype=np.float32) * 0.5
+                    mouth_frame_seconds = max(0.01, TTS_MOUTH_SYNC_WINDOW_SECONDS)
 
-            playback_result = _play_speech_file(
-                stop_event, mouth_envelope, mouth_frame_seconds, chunk_audio_file
-            )
+                if TTS_START_DELAY > 0:
+                    time.sleep(TTS_START_DELAY)
+                set_emotion(EMOTION_TALKING)
+
+                note_speech_started()
+
+                if not playback_started and on_playback_start is not None:
+                    try:
+                        on_playback_start()
+                    except Exception as e:
+                        print(f"⚠️ TTS playback-start callback failed: {e}")
+                    playback_started = True
+
+                playback_result = _play_speech_file(
+                    stop_event, mouth_envelope, mouth_frame_seconds, chunk_audio_file
+                )
             if stop_event.is_set() or playback_result is True:
                 if keyboard_skip.is_set():
                     skipped_by_keyboard = True
@@ -1008,6 +1186,28 @@ def speak(
                 break
             if _pause_after > 0 and combined_audio_file is None:
                 stop_event.wait(_pause_after)
+            if action_after == "pause" and not stop_event.is_set():
+                stop_event.wait(TTS_SMILE_PAUSE_SECONDS)
+            elif action_after == "smile" and not stop_event.is_set():
+                set_emotion("wake")
+                _set_smile_gesture_lock(True)
+                try:
+                    _set_smile_head_hold(True)
+                    smile_head_held = True
+                    gesture_started_at = time.monotonic()
+                    set_temporary_emotion(
+                        "happy",
+                        TTS_SMILE_PAUSE_SECONDS,
+                        fallback_emotion=EMOTION_TALKING,
+                    )
+                    _perform_smile_wink()
+                    elapsed = time.monotonic() - gesture_started_at
+                    stop_event.wait(
+                        max(0.0, TTS_SMILE_PAUSE_SECONDS - elapsed)
+                    )
+                finally:
+                    set_emotion(EMOTION_TALKING)
+                    _set_smile_gesture_lock(False)
 
         note_speech_finished()
 
@@ -1024,6 +1224,8 @@ def speak(
     finally:
         stop_event.set()
         set_talk_level(0.0)
+        if smile_head_held:
+            _set_smile_head_hold(False)
         if monitor_thread is not None:
             monitor_thread.join(timeout=0.5)
         if keyboard_thread is not None:

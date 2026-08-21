@@ -277,6 +277,23 @@ PRESENTATION_NARROW_AUDIENCE_BEARINGS = (
 # Additional silence requested by an exact [Pause] speech-control marker.
 TTS_EXPLICIT_PAUSE_SECONDS = 1.5
 
+# Brief silence immediately before text marked [Humor].
+TTS_HUMOR_PAUSE_SECONDS = 0.6
+
+# Hold the happy expression through the wink and a brief beat after it opens.
+TTS_SMILE_PAUSE_SECONDS = 2.0
+
+# [Smile] is a silent physical gesture; it does not add a spoken response.
+TTS_SMILE_RESPONSES = ("",)
+
+# Text inside [Humor]...[/Humor] gets a short setup pause and slower delivery.
+# Its final clause is slowed further to emphasize the punchline.
+TTS_HUMOR_LENGTH_SCALE_MULTIPLIER = 1.07
+TTS_HUMOR_EMPHASIS_LENGTH_SCALE_MULTIPLIER = 1.14
+
+# [Smile] performs one deliberately slow wink.
+TTS_SMILE_WINK_CLOSED_SECONDS = 1.5
+
 # Add a separate pause after clause-ending colons and semicolons. Colons inside
 # values such as times and ratios are left unchanged.
 TTS_PAUSE_AT_COLONS_AND_SEMICOLONS = True
