@@ -6,18 +6,32 @@ from config import (
 )
 from robot import robot_emotions
 
-print("🤖 Starting robot emotions...")
+_emotions_started = False
 
-if ENABLE_FACE_MOTION_DIAGNOSTIC:
-    print("🧪 Diagnostic face lock enabled: eye and eyelid animation disabled")
-    robot_emotions.start("wake")
-    # The normal wake expression intentionally lights one mouth pixel. Stop
-    # the animation controller after applying the stationary pose so the
-    # diagnostic remains mechanically quiet with every mouth LED off.
-    robot_emotions.stop(clear_mouth=True, relax_servos=False)
-else:
-    if robot_emotions.start(EMOTION_STANDBY):
-        print("✅ Servo and mouth hardware ready")
+
+def start_emotions():
+    """Initialize the face only when the rest of Ezra is ready to be seen."""
+    global _emotions_started
+
+    if _emotions_started:
+        return True
+
+    print("🤖 Starting robot emotions...")
+
+    if ENABLE_FACE_MOTION_DIAGNOSTIC:
+        print("🧪 Diagnostic face lock enabled: eye and eyelid animation disabled")
+        started = robot_emotions.start("wake")
+        # The normal wake expression intentionally lights one mouth pixel. Stop
+        # the animation controller after applying the stationary pose so the
+        # diagnostic remains mechanically quiet with every mouth LED off.
+        robot_emotions.stop(clear_mouth=True, relax_servos=False)
+    else:
+        started = robot_emotions.start(EMOTION_STANDBY)
+        if started:
+            print("✅ Servo and mouth hardware ready")
+
+    _emotions_started = bool(started)
+    return _emotions_started
 
 
 def set_emotion(emotion):

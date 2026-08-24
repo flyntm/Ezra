@@ -25,11 +25,14 @@ from command_normalization import (
 )
 from config import *
 from ezra_brain import InternetUnavailableError, ask_ezra
-from ezra_emotion import set_emotion, set_temporary_emotion
+from ezra_emotion import set_emotion, set_temporary_emotion, start_emotions
 from item_tests import display_command_text_diagnostic, display_doa_diagnostic
 from local_ai_server import start_local_ai_server, stop_local_ai_server
 from network_status import internet_access_allowed
 from network_status import start_connectivity_monitor, stop_connectivity_monitor
+from service_runtime import install_shutdown_signal_handlers
+from service_watchdog import watchdog
+from presentations import restore_presentation
 from stt import transcribe
 from thinking_comments import prepare_thinking_comments, start_comment
 from tts import generate_speech_file, prepare_speech_cache, speak, speak_cached
@@ -238,14 +241,11 @@ def shutdown_robot():
 
 
 def main():
+    install_shutdown_signal_handlers()
+    watchdog.start()
     start_connectivity_monitor()
     prepare_thinking_comments()
     prepare_speech_cache(WAKE_ONLY_RESPONSES)
-
-    # An online connection is the normal case and needs no spoken startup
-    # announcement. Warn the audience only when Ezra must run offline.
-    if not state.internet_connected:
-        speak("Internet status: offline.")
 
     if not internet_access_allowed():
         try:
@@ -253,16 +253,39 @@ def main():
         except (OSError, RuntimeError) as exc:
             print(f"⚠️ Local AI unavailable: {exc}")
 
+    # Keep the face completely still throughout startup. Servo initialization,
+    # opening the lids, and idle animation begin only at the readiness boundary.
+    start_emotions()
+    if ENABLE_HEAD_TRACKING and not ENABLE_INTERACTION_DIAGNOSTIC:
+        from robot.head_tracking import head_tracker
+
+        if head_tracker.center_on_startup():
+            print("✅ Head centered for startup")
     print("🤖 Ezra ready!\n")
     speak("Ezra ready!")
+
+    # A watchdog restart should return the audience to the last displayed
+    # slide without repeating its narration.
+    restore_presentation(speak)
+    watchdog.ready()
+
+    # An online connection is the normal case and needs no spoken startup
+    # announcement. If offline, report it after the readiness announcement so
+    # speaking it cannot initialize or animate the face early.
+    if not state.internet_connected:
+        speak("Internet status: offline.")
+
     log_speaker_output_sanity()
     interaction_count = 0
 
     try:
         while not state.shutting_down:
 
+            watchdog.idle()
+
             # Wait for Ezra or Hey Ezra.
             wake_text, wake_audio = wait_for_wake_word_with_audio()
+            watchdog.busy()
 
             command_timing = None
             if ENABLE_COMMAND_TIMING_DIAGNOSTIC:
@@ -618,6 +641,7 @@ def main():
         print(f"\n❌ MAIN ERROR: {e}")
 
     finally:
+        watchdog.stop()
         stop_connectivity_monitor()
         shutdown_robot()
 

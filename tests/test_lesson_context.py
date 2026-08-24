@@ -40,6 +40,57 @@ class LessonContextTests(unittest.TestCase):
         self.assertEqual(chunks[0].source, "study book")
         self.assertIn("Prayer guided", chunks[0].text)
 
+    def test_single_weak_word_match_does_not_trigger_retrieval(self):
+        (self.directory / "lesson.jsonl").write_text(
+            json.dumps({"text": "Everyone passing by admired the temple."}) + "\n",
+            encoding="utf-8",
+        )
+
+        chunks = retrieve_context(
+            "say goodnight to everyone",
+            directory=self.directory,
+            database_path=self.directory / "missing.sqlite3",
+        )
+
+        self.assertEqual(chunks, [])
+
+    def test_unrelated_conversation_does_not_retrieve_acts_lesson(self):
+        (self.directory / "lesson.jsonl").write_text(
+            json.dumps({
+                "text": (
+                    "The book of Acts fulfilled its mission. Remember what "
+                    "you learned and apply it in your life."
+                ),
+                "metadata": {"title": "Acts Overview"},
+            }) + "\n",
+            encoding="utf-8",
+        )
+
+        chunks = retrieve_context(
+            "its your worthless brother ive been trying to call you trying "
+            "to remember to call you all weekend and shoot",
+            directory=self.directory,
+            database_path=self.directory / "missing.sqlite3",
+        )
+
+        self.assertEqual(chunks, [])
+
+    def test_misheard_name_question_does_not_retrieve_study_guide(self):
+        (self.directory / "lesson.jsonl").write_text(
+            json.dumps({
+                "text": "Get the group started right by learning each name."
+            }) + "\n",
+            encoding="utf-8",
+        )
+
+        chunks = retrieve_context(
+            "it is right howd you get your name",
+            directory=self.directory,
+            database_path=self.directory / "missing.sqlite3",
+        )
+
+        self.assertEqual(chunks, [])
+
     def test_explicit_bible_reference_retrieves_scripture(self):
         database = self.directory / "bible.sqlite3"
         with sqlite3.connect(database) as connection:

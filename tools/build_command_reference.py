@@ -11,9 +11,21 @@ OUTPUT_PATH = PROJECT_ROOT / "EZRA_COMMANDS.md"
 
 PRESENTATION_COMMANDS = (
     ("Introduce yourself", "Reads Ezra's introduction.", "Yes"),
-    ("Tell us who you are", "Reads Ezra's introduction.", "Yes"),
-    ("Where does your name come from?", "Explains how Ezra got his name.", "Yes"),
-    ("Start the presentation", "Opens the Acts presentation at slide 1.", "Yes"),
+    (
+        "Tell us who you are / Tell everyone who you are",
+        "Reads Ezra's introduction.",
+        "Yes",
+    ),
+    (
+        "Where does your name come from? / Where did your name come from? / How did you get your name? / Tell me where your name comes from / Why are you named Ezra?",
+        "Explains how Ezra got his name.",
+        "Yes",
+    ),
+    (
+        "Start the presentation / Begin the presentation / Open the presentation / Run the presentation / Present the Acts lesson",
+        "Opens the Acts presentation at slide 1.",
+        "Yes",
+    ),
     (
         "Start the presentation on slide 5",
         "Opens the presentation at the requested slide.",
@@ -22,28 +34,39 @@ PRESENTATION_COMMANDS = (
     ("Next slide / Forward", "Moves to the next slide.", "Yes"),
     ("Previous slide / Back", "Moves to the previous slide.", "No"),
     (
-        "Go to slide 4 / Show us slide 4 of the presentation",
+        "Go to slide 4 / Show us slide 4 of the presentation / Display slide 4 / Show the fourth slide",
         "Displays a numbered slide.",
         "No*",
     ),
-    ("Show question 2", "Displays the requested question slide.", "No*"),
-    ("Reveal the answer / Show the answers", "Reveals the answer slide.", "Yes"),
-    ("Display the answers", "Reveals the answers without reading them.", "No*"),
+    (
+        "Show question 2 / Go to question 2 / Display question 2",
+        "Displays the requested question slide.",
+        "No*",
+    ),
+    (
+        "Reveal the answer / Show the answers / Reveal the responses / Show the response",
+        "Reveals the answer slide.",
+        "Yes",
+    ),
+    (
+        "Display the answers / Display the responses",
+        "Reveals the answers without reading them.",
+        "No*",
+    ),
     (
         "Tell us about this slide / Explain this slide",
         "Reads the script for the displayed slide.",
         "Yes",
     ),
-    ("Stop the presentation", "Closes the presentation.", "No"),
+    (
+        "Stop the presentation / End the presentation / Close the presentation / Quit the presentation",
+        "Closes the presentation.",
+        "No",
+    ),
     (
         "Rehearse the presentation / Preview the presentation / Test the presentation",
         "Prints a complete rehearsal without slides or speech.",
         "No",
-    ),
-    (
-        "Question about the current Acts lessons",
-        "Searches all presentation-folder JSONL study-book files and Scripture.",
-        "Yes",
     ),
     (
         "Tell us more",
@@ -71,15 +94,31 @@ BIBLE_COMMANDS = (
 )
 
 OTHER_COMMANDS = (
+    (
+        "Say good night to everyone",
+        "Wishes the audience good night with a closing joke and a smile.",
+    ),
     ("What time is it?", "Speaks the current local time."),
     ("Set volume to 1–10", "Sets speaker volume from 10% to 100%."),
     ("What's the weather?", "Reports weather for the configured location."),
     ("What's the weather in Dallas?", "Reports weather for a named location."),
-    ("What is the forecast? / Will it rain?", "Reports relevant forecast details."),
-    ("What's the news? / Read the headlines", "Reports current news headlines."),
+    (
+        "What is the forecast? / Will it rain? / What is the temperature? / Will it snow?",
+        "Reports relevant forecast details.",
+    ),
+    (
+        "What's the news? / Read the headlines / What are the current events? / What's happening?",
+        "Reports current news headlines.",
+    ),
     ("Ezra, stop", "Interrupts Ezra while he is speaking."),
-    ("Quit / Exit / Stop program", "Exits the Ezra application."),
-    ("Shutdown / Power off", "Exits Ezra and attempts to power off the Pi."),
+    (
+        "Quit / Exit / Quit program / Exit program / Stop program",
+        "Exits the Ezra application.",
+    ),
+    (
+        "Shutdown / Shut down / Power off / Poweroff",
+        "Exits Ezra and attempts to power off the Pi.",
+    ),
     (
         "Any general question",
         "Uses Ezra's AI; recent conversation can provide follow-up context.",
@@ -149,6 +188,24 @@ when offline. A Bible passage can also be displayed while Ezra reads it.
 ## Other commands
 
 {_table(("Command", "What it does"), OTHER_COMMANDS)}
+
+## Pi terminal presentation controls
+
+If Ezra becomes unresponsive during a presentation, press **Ctrl+Alt+T** on
+the Pi keyboard to open a terminal. These are terminal shortcuts, not spoken
+commands:
+
+| Shortcut       | What it does                                      |
+| -------------- | ------------------------------------------------- |
+| `ezra-stop`    | Stops Ezra and leaves it stopped.                  |
+| `ezra-start`   | Starts Ezra after an intentional stop.             |
+| `ezra-restart` | Stops and starts the Ezra application.             |
+| `ezra-reboot`  | Reboots the entire Pi; it may request the password. |
+
+After `ezra-reboot`, Ezra should start automatically when the Pi returns to
+its desktop session. **Ctrl+C** only stops Ezra when it was launched directly
+from that same terminal. If the terminal is following Ezra's system log,
+**Ctrl+C** stops only the log viewer.
 
 ## Notes
 

@@ -13,12 +13,15 @@ from config import WEB_BIBLE_DATABASE
 
 
 PRESENTATIONS_DIR = Path(__file__).parent / "presentations"
+MIN_CONTEXT_SCORE = 2
 _WORD = re.compile(r"[a-z0-9]+(?:'[a-z]+)?", re.IGNORECASE)
 _STOP_WORDS = {
-    "a", "an", "and", "are", "as", "at", "be", "by", "did", "do",
-    "does", "for", "from", "how", "i", "in", "is", "it", "of", "on",
-    "or", "that", "the", "this", "to", "was", "were", "what", "when",
-    "where", "which", "who", "why", "with", "you",
+    "a", "all", "an", "and", "are", "as", "at", "be", "been", "by",
+    "did", "do", "does", "for", "from", "get", "had", "has", "have", "how",
+    "i", "in", "is", "it", "its", "of", "on", "or", "our", "remember",
+    "right", "that", "the", "their", "this", "to", "us", "was", "were", "what",
+    "when", "where", "which", "who", "why", "will", "with", "you",
+    "your",
 }
 _material_cache = None
 _material_signature = None
@@ -61,7 +64,9 @@ def _score(question, text):
         return 0
     text_terms = _terms(text)
     overlap = query_terms & text_terms
-    return sum(2 if len(term) >= 7 else 1 for term in overlap)
+    # Count distinct shared concepts. A long incidental word such as
+    # "everyone" must not satisfy a two-point relevance threshold by itself.
+    return len(overlap)
 
 
 def _jsonl_chunks(directory):
@@ -173,7 +178,9 @@ def retrieve_context(
     scripture = _scripture_chunks(question, database_path)
     if parse_bible_reference(question) is not None:
         # An explicitly requested passage is authoritative for that request.
-        selected = scripture + [chunk for score, chunk in ranked if score > 0]
+        selected = scripture + [
+            chunk for score, chunk in ranked if score >= MIN_CONTEXT_SCORE
+        ]
     else:
         # For topical questions, let Scripture and study-book material
         # compete on relevance instead of favoring a merely incidental match.
@@ -184,7 +191,7 @@ def retrieve_context(
                 key=lambda item: item[0],
                 reverse=True,
             )
-            if score > 0
+            if score >= MIN_CONTEXT_SCORE
         ]
     selected = selected[:max_chunks]
 

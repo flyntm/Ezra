@@ -11,8 +11,17 @@ show natural phrases; minor wording variations are accepted.
 | ---------------------------------------------------- | ---------------------------------------------------------------------- | --------- |
 | Introduce yourself                                   | Reads Ezra's introduction.                                             | Yes       |
 | Tell us who you are                                  | Reads Ezra's introduction.                                             | Yes       |
+|     Tell everyone who you are                        |                                                                        |           |
 | Where does your name come from?                      | Explains how Ezra got his name.                                        | Yes       |
+|     Where did your name come from?                   |                                                                        |           |
+|     How did you get your name?                       |                                                                        |           |
+|     Tell me where your name comes from               |                                                                        |           |
+|     Why are you named Ezra?                          |                                                                        |           |
 | Start the presentation                               | Opens the Acts presentation at slide 1.                                | Yes       |
+|     Begin the presentation                           |                                                                        |           |
+|     Open the presentation                            |                                                                        |           |
+|     Run the presentation                             |                                                                        |           |
+|     Present the Acts lesson                          |                                                                        |           |
 | Start the presentation on slide 5                    | Opens the presentation at the requested slide.                         | Yes       |
 | Next slide                                           | Moves to the next slide.                                               | Yes       |
 |     Forward                                          |                                                                        |           |
@@ -20,17 +29,26 @@ show natural phrases; minor wording variations are accepted.
 |     Back                                             |                                                                        |           |
 | Go to slide 4                                        | Displays a numbered slide.                                             | No*       |
 |     Show us slide 4 of the presentation              |                                                                        |           |
+|     Display slide 4                                  |                                                                        |           |
+|     Show the fourth slide                            |                                                                        |           |
 | Show question 2                                      | Displays the requested question slide.                                 | No*       |
+|     Go to question 2                                 |                                                                        |           |
+|     Display question 2                               |                                                                        |           |
 | Reveal the answer                                    | Reveals the answer slide.                                              | Yes       |
 |     Show the answers                                 |                                                                        |           |
+|     Reveal the responses                             |                                                                        |           |
+|     Show the response                                |                                                                        |           |
 | Display the answers                                  | Reveals the answers without reading them.                              | No*       |
+|     Display the responses                            |                                                                        |           |
 | Tell us about this slide                             | Reads the script for the displayed slide.                              | Yes       |
 |     Explain this slide                               |                                                                        |           |
 | Stop the presentation                                | Closes the presentation.                                               | No        |
+|     End the presentation                             |                                                                        |           |
+|     Close the presentation                           |                                                                        |           |
+|     Quit the presentation                            |                                                                        |           |
 | Rehearse the presentation                            | Prints a complete rehearsal without slides or speech.                  | No        |
 |     Preview the presentation                         |                                                                        |           |
 |     Test the presentation                            |                                                                        |           |
-| Question about the current Acts lessons              | Searches all presentation-folder JSONL study-book files and Scripture. | Yes       |
 | Tell us more                                         | Continues the previous sourced answer with the next relevant point.    | Yes       |
 | Give us your own broader explanation of ...          | Bypasses study-book and Scripture retrieval for a brief general        | Yes       |
 |                                                      | explanation.                                                           |           |
@@ -60,21 +78,48 @@ when offline. A Bible passage can also be displayed while Ezra reads it.
 
 | Command                                | What it does                                                           |
 | -------------------------------------- | ---------------------------------------------------------------------- |
+| Say good night to everyone             | Wishes the audience good night with a closing joke and a smile.        |
 | What time is it?                       | Speaks the current local time.                                         |
 | Set volume to 1–10                     | Sets speaker volume from 10% to 100%.                                  |
 | What's the weather?                    | Reports weather for the configured location.                           |
 | What's the weather in Dallas?          | Reports weather for a named location.                                  |
 | What is the forecast?                  | Reports relevant forecast details.                                     |
 |     Will it rain?                      |                                                                        |
+|     What is the temperature?           |                                                                        |
+|     Will it snow?                      |                                                                        |
 | What's the news?                       | Reports current news headlines.                                        |
 |     Read the headlines                 |                                                                        |
+|     What are the current events?       |                                                                        |
+|     What's happening?                  |                                                                        |
 | Ezra, stop                             | Interrupts Ezra while he is speaking.                                  |
 | Quit                                   | Exits the Ezra application.                                            |
 |     Exit                               |                                                                        |
+|     Quit program                       |                                                                        |
+|     Exit program                       |                                                                        |
 |     Stop program                       |                                                                        |
 | Shutdown                               | Exits Ezra and attempts to power off the Pi.                           |
+|     Shut down                          |                                                                        |
 |     Power off                          |                                                                        |
+|     Poweroff                           |                                                                        |
 | Any general question                   | Uses Ezra's AI; recent conversation can provide follow-up context.     |
+
+## Pi terminal presentation controls
+
+If Ezra becomes unresponsive during a presentation, press **Ctrl+Alt+T** on
+the Pi keyboard to open a terminal. These are terminal shortcuts, not spoken
+commands:
+
+| Shortcut       | What it does                                      |
+| -------------- | ------------------------------------------------- |
+| `ezra-stop`    | Stops Ezra and leaves it stopped.                  |
+| `ezra-start`   | Starts Ezra after an intentional stop.             |
+| `ezra-restart` | Stops and starts the Ezra application.             |
+| `ezra-reboot`  | Reboots the entire Pi; it may request the password. |
+
+After `ezra-reboot`, Ezra should start automatically when the Pi returns to
+its desktop session. **Ctrl+C** only stops Ezra when it was launched directly
+from that same terminal. If the terminal is following Ezra's system log,
+**Ctrl+C** stops only the log viewer.
 
 ## Notes
 

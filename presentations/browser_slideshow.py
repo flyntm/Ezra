@@ -304,6 +304,14 @@ class BrowserSlideshow:
     def reveal(self):
         self.revealed = True
 
+    def healthy(self):
+        return bool(
+            self.process is not None
+            and self.process.poll() is None
+            and self.server_thread is not None
+            and self.server_thread.is_alive()
+        )
+
     def close(self):
         if self.process is not None and self.process.poll() is None:
             self.process.terminate()

@@ -15,6 +15,7 @@ from config import (
     HEAD_TRACKING_MIN_SPEECH_SECONDS,
     HEAD_TRACKING_SAMPLE_INTERVAL_SECONDS,
     HEAD_MOVEMENT_STEP_DELAY_SECONDS,
+    HEAD_STARTUP_CENTER_SETTLE_SECONDS,
     LISTEN_ACTIVE_RMS_THRESHOLD,
     VERBOSE_RUNTIME_LOGS,
 )
@@ -224,6 +225,21 @@ class HeadTracker:
             self._current_yaw = 0.0
             return
         self._move_smooth(0.0)
+
+    def center_on_startup(self):
+        """Establish a known physical and logical center after servo startup."""
+        self.reset_utterance()
+        with self._motion_lock:
+            self._center_hold = False
+            self._current_yaw = 0.0
+            if servos.pca is None:
+                return False
+            # A fresh process cannot know the physical yaw left behind by an
+            # abrupt watchdog stop. Explicitly command calibrated center, then
+            # wait for the servo to arrive before any audience motion begins.
+            servos.set_servo_angle(CH_HEAD_TURN, self._yaw_to_servo(0.0))
+            time.sleep(HEAD_STARTUP_CENTER_SETTLE_SECONDS)
+            return True
 
     def _yaw_to_servo(self, yaw):
         yaw = _clamp(

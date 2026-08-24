@@ -63,7 +63,7 @@ _INTRODUCTION_REQUEST = re.compile(
 _NAME_ORIGIN_REQUEST = re.compile(
     r"\b(?:"
     r"(?:tell (?:us|me|everyone) )?where (?:did |does )?your name come(?:s)? from"
-    r"|how did you get your name"
+    r"|how(?:\s+did|['’]?d) you get your name"
     r"|why (?:are|were) you named ezra"
     r")\b",
     re.IGNORECASE,

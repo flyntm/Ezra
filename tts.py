@@ -478,13 +478,18 @@ def _split_emphasis_segments(text):
                     )
                 else:
                     words = emphasized.split()
-                    split_at = max(1, len(words) - min(3, len(words)))
-                    setup = " ".join(words[:split_at]).strip()
-                    punch = " ".join(words[split_at:]).strip()
-                    if setup:
-                        segments.append((setup, "humor"))
-                    if punch:
-                        segments.append((punch, "humor_emphasis"))
+                    if len(words) <= 3:
+                        # A short humorous phrase is already its own beat.
+                        # Splitting it word-by-word sounds choppy.
+                        segments.append((emphasized, "humor_emphasis"))
+                    else:
+                        split_at = len(words) - 3
+                        setup = " ".join(words[:split_at]).strip()
+                        punch = " ".join(words[split_at:]).strip()
+                        if setup:
+                            segments.append((setup, "humor"))
+                        if punch:
+                            segments.append((punch, "humor_emphasis"))
             else:
                 segments.append((emphasized, True))
         position = match.end()
@@ -560,7 +565,19 @@ def _split_explicit_pause_segments(text):
                 segments[-1] = (previous_text, pause_seconds)
             continue
         segments.append((cleaned, 0.0))
-    return segments or [(str(text), 0.0)]
+    if segments:
+        return segments
+
+    # A marker-only segment can be produced when a delivery marker such as
+    # [Humor] follows an automatically inserted pause. It is an instruction,
+    # never text for Piper to pronounce.
+    if re.fullmatch(
+        r"(?:\s*\[(?:Pause|HumorPause)\]\s*)+",
+        str(text),
+        flags=re.IGNORECASE,
+    ):
+        return []
+    return [(str(text), 0.0)]
 
 
 def _split_script_action_segments(text):
@@ -665,6 +682,17 @@ def _apply_pronunciation_overrides(text):
     return spoken_text
 
 
+def _strip_speech_control_markers(text):
+    """Guarantee that internal speech/action markers never reach Piper."""
+
+    return re.sub(
+        r"\s*\[/?(?:Pause|HumorPause|Smile|Humor|Emph)\]\s*",
+        " ",
+        str(text),
+        flags=re.IGNORECASE,
+    ).strip()
+
+
 def generate_speech_file(
     text,
     output_file="temp.wav",
@@ -675,6 +703,7 @@ def generate_speech_file(
     if state.shutting_down:
         return False
 
+    text = _strip_speech_control_markers(text)
     text = _apply_pronunciation_overrides(text)
     selected_length_scale = (
         TTS_LENGTH_SCALE if length_scale is None else length_scale
@@ -808,7 +837,22 @@ def _generate_combined_speech_file(
                     pause_seconds <= 0
                     and speech_units[index][1] != speech_units[index + 1][1]
                 ):
-                    pause_seconds = TTS_EMPHASIS_BOUNDARY_PAUSE_SECONDS
+                    current_delivery = speech_units[index][1]
+                    next_delivery = speech_units[index + 1][1]
+                    humor_deliveries = ("humor", "humor_emphasis")
+                    humor_to_emphasis = (
+                        current_delivery in humor_deliveries
+                        and next_delivery is True
+                    ) or (
+                        current_delivery is True
+                        and next_delivery in humor_deliveries
+                    )
+                    within_humor = (
+                        current_delivery in humor_deliveries
+                        and next_delivery in humor_deliveries
+                    )
+                    if not humor_to_emphasis and not within_humor:
+                        pause_seconds = TTS_EMPHASIS_BOUNDARY_PAUSE_SECONDS
                 silence_frames = round(parameters.framerate * pause_seconds)
                 if silence_frames:
                     joined_frames.append(
@@ -944,7 +988,7 @@ def speak(
     note_speech_requested()
 
     terminal_text = re.sub(
-        r"\s*\[/?(?:Pause|Smile|Humor)\]\s*",
+        r"\s*\[/?(?:Pause|Smile|Humor|Emph)\]\s*",
         " ",
         str(text),
         flags=re.IGNORECASE,
@@ -1036,10 +1080,14 @@ def speak(
                     _append_smile_response(speech_units, action_start)
         combined_audio_file = None
         speech_character_count = sum(len(unit[0]) for unit in speech_units)
+        trailing_action = speech_units[-1][3] if speech_units else None
+        actions_can_follow_combined_audio = all(
+            unit[3] is None for unit in speech_units[:-1]
+        ) and trailing_action in (None, "smile", "pause")
         if (
             speech_character_count <= TTS_CHUNK_MAX_CHARS
             and len(speech_units) > 1
-            and all(unit[3] is None for unit in speech_units)
+            and actions_can_follow_combined_audio
             and any(
                 emphasized or pause_after > 0
                 for _, emphasized, pause_after, _ in speech_units
@@ -1051,7 +1099,8 @@ def speak(
                 combined_audio_file,
                 sentence_silence=sentence_silence,
             ):
-                speech_units = [("", False, 0.0, None)]
+                # A trailing gesture still happens after the joined recording.
+                speech_units = [("", False, 0.0, trailing_action)]
             else:
                 # Preserve narration even if WAV joining is unavailable.
                 print("⚠️ TTS audio joining failed; using segment playback")
@@ -1189,7 +1238,10 @@ def speak(
             if action_after == "pause" and not stop_event.is_set():
                 stop_event.wait(TTS_SMILE_PAUSE_SECONDS)
             elif action_after == "smile" and not stop_event.is_set():
-                set_emotion("wake")
+                # The wake pose intentionally lights one white mouth pixel.
+                # Keep the talking mouth closed during the handoff instead,
+                # then let the happy pose draw the requested smile directly.
+                set_talk_level(0.0)
                 _set_smile_gesture_lock(True)
                 try:
                     _set_smile_head_hold(True)

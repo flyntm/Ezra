@@ -9,6 +9,7 @@ import state
 
 from bible_display import close_bible_display, show_bible_passage, split_passage_response
 from bible_service import get_bible_response
+from command_phrases import GOOD_NIGHT_RESPONSE, looks_like_good_night_command
 from config import ENABLE_BIBLE_DISPLAY, GOODBYE_TEXT, SHUTDOWN_SLEEP_SETTLE_SECONDS
 from live_info import get_live_info_response
 from network_status import internet_access_allowed
@@ -59,7 +60,7 @@ VOLUME_WORDS = {
 VOLUME_WORD_PATTERN = r"\b(?:volume|volumes|value|vol|aim|bomb)\b"
 VOLUME_FILLER_WORDS = {"to", "at", "on", "of", "the", "a"}
 POWEROFF_PATTERN = r"\b(?:shutdown|shut down|power off|poweroff)\b"
-QUIT_PROGRAM_PATTERN = r"\b(?:quit|exit|stop|quit program|stop program|exit program)\b"
+QUIT_PROGRAM_PATTERN = r"\b(?:quit|exit)(?:\s+program)?\b|\bstop\s+program\b"
 
 
 def parse_volume_level(command):
@@ -209,6 +210,11 @@ def handle_local_command(command):
         print("⚠️ System shutdown command failed")
         wake_up()
         speak("I couldn't shut down the system.")
+        return True
+
+    if looks_like_good_night_command(command):
+        speak(GOOD_NIGHT_RESPONSE)
+        reset_idle_timer()
         return True
 
     if looks_like_volume_command(command):

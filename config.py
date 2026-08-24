@@ -525,6 +525,11 @@ WAKE_BLOCK_SIZE = 1024
 WAKE_THRESHOLD = 0.20
 WAKE_REARM_THRESHOLD = 0.05
 
+# Reject very quiet model matches caused by room/mechanical background noise.
+# This is evaluated against the peak RMS over the same recent blocks used for
+# the wake-model score, rather than only the quiet tail of a spoken wake word.
+WAKE_MIN_RMS_THRESHOLD = 0.012
+
 HEY_EZRA_MIN_SCORE = 0.55
 HEY_EZRA_DOMINANCE_MARGIN = 0.12
 EZRA_PREFERENCE_FLOOR = 0.18
@@ -556,7 +561,7 @@ WAKE_TAIL_TRIM_SECONDS_EZRA = 0.00
 WAKE_TAIL_TRIM_SECONDS_HEY_EZRA = 0.00
 
 # Time until Ezra goes to sleep
-SLEEP_TIMEOUT = 60
+SLEEP_TIMEOUT = 600
 
 WAKE_MIC_OPEN_RETRIES = 8
 WAKE_MIC_RETRY_DELAY = 0.25
@@ -607,6 +612,11 @@ HEAD_TRACKING_AVERAGE_SECONDS = 0.25
 # move more quickly. Motion is internally divided into small, smooth steps.
 # 0.1 is the original speed; 0.2 takes approximately twice as long.
 HEAD_MOVEMENT_STEP_DELAY_SECONDS = 0.2
+
+# On startup the servo controller may have survived an abrupt watchdog restart
+# with the head physically turned. Reassert center and let the mechanism settle
+# before Ezra announces readiness or resumes a presentation.
+HEAD_STARTUP_CENTER_SETTLE_SECONDS = 1.5
 
 
 # =========================

@@ -8,6 +8,8 @@ from collections import deque
 import numpy as np
 import sounddevice as sd
 
+from service_watchdog import watchdog
+
 from config import (
     COMMAND_DOA_MAX_CIRCULAR_DEVIATION_DEGREES,
     COMMAND_DOA_MIN_ACTIVE_SPEECH_SECONDS,
@@ -50,6 +52,7 @@ from config import (
     WAKE_END_SILENCE as END_SILENCE,
     WAKE_ACTIVE_RMS_THRESHOLD as ACTIVE_RMS_THRESHOLD,
     WAKE_MAX_COMMAND_TIME as MAX_COMMAND_TIME,
+    WAKE_MIN_RMS_THRESHOLD,
     WAKE_ONLY_DOA_MIN_ACTIVE_SPEECH_SECONDS,
     MIC_DEVICE as ALSA_MIC_DEVICE,
     WAKE_MIC_DEVICE as MIC_DEVICE,
@@ -448,6 +451,8 @@ def audio_callback(indata, frames, time_info, status):
     global audio_buffer_len, recent_buffer_len
     global _last_stream_status_log_at
 
+    watchdog.audio_activity()
+
     if status:
         now = time.monotonic()
         if now - _last_stream_status_log_at >= RESPEAKER_ERROR_LOG_INTERVAL_SECONDS:
@@ -584,8 +589,10 @@ def run(return_audio=False):
     pending_wake = False
     pending_wake_time = 0.0
     pending_phrase = None
+    low_volume_candidate_logged = False
 
     history = deque(maxlen=4)
+    rms_history = deque(maxlen=4)
     stop_history = deque(maxlen=STOP_GUARD_HITS)
 
     audio_buffer = np.zeros(
@@ -1017,7 +1024,9 @@ def run(return_audio=False):
             wake_score = max(ezra_combined, hey_ezra_score)
 
             history.append(wake_score)
+            rms_history.append(rms)
             peak_score = max(history)
+            recent_peak_rms = max(rms_history)
 
             if VERBOSE_RUNTIME_LOGS and (peak_score > 0.05 or stop_score > 0.05):
                 print(
@@ -1031,11 +1040,34 @@ def run(return_audio=False):
                 )
 
             # Start a pending wake detection.
-            if peak_score >= THRESHOLD and armed and not pending_wake:
+            if (
+                peak_score >= THRESHOLD
+                and recent_peak_rms >= WAKE_MIN_RMS_THRESHOLD
+                and armed
+                and not pending_wake
+            ):
                 pending_wake = True
                 pending_wake_time = current_time
                 pending_phrase = detected_phrase
                 _last_wake_detected_at = time.monotonic()
+                low_volume_candidate_logged = False
+            elif (
+                peak_score >= THRESHOLD
+                and recent_peak_rms < WAKE_MIN_RMS_THRESHOLD
+                and armed
+                and not pending_wake
+                and not low_volume_candidate_logged
+            ):
+                if VERBOSE_RUNTIME_LOGS:
+                    print(
+                        "🔇 Ignoring quiet wake candidate: "
+                        f"score={peak_score:.3f}, "
+                        f"peak_rms={recent_peak_rms:.4f}, "
+                        f"minimum={WAKE_MIN_RMS_THRESHOLD:.4f}"
+                    )
+                low_volume_candidate_logged = True
+            elif peak_score < THRESHOLD:
+                low_volume_candidate_logged = False
 
             # Confirm the pending detection.
             if pending_wake:

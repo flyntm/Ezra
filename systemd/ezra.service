@@ -1,0 +1,22 @@
+[Unit]
+Description=Ezra robot application
+Documentation=file:%h/projects/ezra/AUTOSTART.md
+After=graphical-session.target pipewire.service wireplumber.service
+
+[Service]
+Type=notify
+WorkingDirectory=%h/projects/ezra
+ExecStart=%h/projects/ezra/ezra311-env/bin/python %h/projects/ezra/main.py
+# Explicit `systemctl stop` is not restarted; any process exit while the unit
+# should be running is retried, including errors Ezra catches before exiting.
+Restart=always
+RestartSec=5
+WatchdogSec=30
+TimeoutStopSec=20
+Environment=PYTHONUNBUFFERED=1
+Environment=DISPLAY=:0
+Environment=WAYLAND_DISPLAY=wayland-0
+Environment=XDG_RUNTIME_DIR=/run/user/%U
+
+[Install]
+WantedBy=default.target

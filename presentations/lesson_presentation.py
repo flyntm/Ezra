@@ -12,6 +12,8 @@ from config import (
     PRESENTATION_TTS_CHUNK_MAX_CHARS,
     SCRIPTED_TTS_SENTENCE_SILENCE,
 )
+import presentation_recovery
+from service_watchdog import watchdog
 
 from .browser_slideshow import BrowserSlideshow
 from .powerpoint import PowerPointDeck, PresentationError, RehearsalSlideshow
@@ -232,16 +234,33 @@ class LessonPresentationSession:
         self.look_targets = look_targets
         self.center_head = center_head
         self.deck = PowerPointDeck.load(deck_path or discover_presentation())
+        self.persist_recovery = slideshow is None
         self.slideshow = slideshow or BrowserSlideshow(self.deck.path)
         self.slide_index = 0
         self.answer_revealed = False
         self.active = False
 
+    def _persist(self):
+        if self.active and self.persist_recovery:
+            presentation_recovery.save(
+                self.deck.path,
+                self.slide_index + 1,
+                self.answer_revealed,
+            )
+
     def start(self, slide_number=1, narrate=True):
         self.slideshow.start()
         self.active = True
+        watchdog.register_health_check(
+            "presentation display",
+            lambda: not self.active
+            or not hasattr(self.slideshow, "healthy")
+            or self.slideshow.healthy(),
+        )
         if slide_number != 1:
             self.go_to(slide_number)
+        else:
+            self._persist()
         if narrate:
             return self._speak_current()
         return False
@@ -300,6 +319,7 @@ class LessonPresentationSession:
                 if self.deck.reveal_slides[self.slide_index]:
                     self.slideshow.reveal()
                     self.answer_revealed = True
+                self._persist()
                 print(
                     f"[presentation] slide={slide_number} "
                     f"advancement_command=next resulting_slide={self.slide_index + 1}"
@@ -328,6 +348,7 @@ class LessonPresentationSession:
         if self.deck.reveal_slides[self.slide_index]:
             self.slideshow.reveal()
             self.answer_revealed = True
+        self._persist()
         print(
             f"[presentation] navigation_command=next "
             f"resulting_slide={self.slide_index + 1}"
@@ -345,6 +366,7 @@ class LessonPresentationSession:
         if self.deck.reveal_slides[self.slide_index]:
             self.slideshow.reveal()
             self.answer_revealed = True
+        self._persist()
         print(
             f"[presentation] navigation_command=previous "
             f"resulting_slide={self.slide_index + 1}"
@@ -364,6 +386,7 @@ class LessonPresentationSession:
         if self.deck.reveal_slides[self.slide_index]:
             self.slideshow.reveal()
             self.answer_revealed = True
+        self._persist()
 
     def narrate_current(self):
         """Read the script for the slide that is currently displayed."""
@@ -378,6 +401,7 @@ class LessonPresentationSession:
                 self.slideshow.go_to(index)
                 self.slide_index = index
                 self.answer_revealed = False
+                self._persist()
                 return
         raise PresentationError(
             f"Question {question_number} was not found in this presentation."
@@ -402,14 +426,18 @@ class LessonPresentationSession:
             return False
         self.slideshow.reveal()
         self.answer_revealed = True
+        self._persist()
         if read_script:
             return self._speak_current()
         return False
 
-    def stop(self):
+    def stop(self, clear_recovery=True):
         if self.active:
             self.slideshow.close()
         self.active = False
+        watchdog.remove_health_check("presentation display")
+        if clear_recovery:
+            presentation_recovery.clear()
 
     def _require_active(self):
         if not self.active:
@@ -482,7 +510,14 @@ def has_active_presentation():
     return _session is not None and _session.active
 
 
-def start_presentation(speak, rehearsal=False, slide_number=1, narrate=True):
+def start_presentation(
+    speak,
+    rehearsal=False,
+    slide_number=1,
+    narrate=True,
+    deck_path=None,
+    revealed=False,
+):
     global _session
     if has_active_presentation():
         _session.stop()
@@ -507,8 +542,37 @@ def start_presentation(speak, rehearsal=False, slide_number=1, narrate=True):
         backend,
         look_targets=look_targets,
         center_head=center_head,
+        deck_path=deck_path,
     )
     _session.start(slide_number=slide_number, narrate=narrate)
+    if revealed and _session.deck.reveal_slides[_session.slide_index]:
+        _session.slideshow.reveal()
+        _session.answer_revealed = True
+        _session._persist()
+
+
+def restore_presentation(speak):
+    """Silently restore a presentation interrupted by a service restart."""
+    recovery = presentation_recovery.load()
+    if recovery is None:
+        return False
+    try:
+        start_presentation(
+            speak,
+            slide_number=recovery["slide_number"],
+            narrate=False,
+            deck_path=recovery["deck_path"],
+            revealed=recovery["revealed"],
+        )
+    except (OSError, PresentationError) as exc:
+        print(f"⚠️ Could not restore presentation: {exc}")
+        presentation_recovery.clear()
+        return False
+    print(
+        "[presentation] restored_after_restart "
+        f"slide={recovery['slide_number']} revealed={recovery['revealed']}"
+    )
+    return True
 
 
 def handle_active_command(command, speak):
