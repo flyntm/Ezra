@@ -248,6 +248,7 @@ class RobotEmotionController:
         """Hold an externally selected gaze until explicitly cleared."""
         with self._lock:
             self._external_gaze = (float(horizontal), float(vertical))
+            self._suppress_doa_for_motion(0.12)
             eyes.set_gaze_override(*self._external_gaze)
 
     def clear_external_gaze(self):
@@ -546,8 +547,11 @@ class RobotEmotionController:
             self._next_mouth_frame = now + 0.20
 
     def _tick_thinking(self, now, t):
-        h = 90 + 4 * math.sin(t * 0.45)
-        v = 70 + 2 * math.sin(t * 0.55)
+        # Sweep back and forth along a shallow upward arc every four seconds.
+        # The sine eases each reversal while both eyes remain looking up.
+        sweep = math.sin(t * math.tau / 4.0)
+        h = 90 + 18 * sweep
+        v = 70 + 4 * sweep * sweep
         eyes.gaze(h, v)
         self._set_lids(0.90)
         self._maybe_blink(now, every=(10.0, 18.0))

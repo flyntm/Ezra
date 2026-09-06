@@ -53,6 +53,7 @@ from config import (
     WAKE_ACTIVE_RMS_THRESHOLD as ACTIVE_RMS_THRESHOLD,
     WAKE_MAX_COMMAND_TIME as MAX_COMMAND_TIME,
     WAKE_MIN_RMS_THRESHOLD,
+    WAKE_MIN_SCORE_HITS,
     WAKE_ONLY_DOA_MIN_ACTIVE_SPEECH_SECONDS,
     MIC_DEVICE as ALSA_MIC_DEVICE,
     WAKE_MIC_DEVICE as MIC_DEVICE,
@@ -76,7 +77,10 @@ from config import (
     SOUND_GAZE_TEST_MODE,
     SOUND_GAZE_VERTICAL_POSITION,
 )
-from respeaker_io import create_respeaker_or_raise
+from respeaker_io import (
+    create_respeaker_or_raise,
+    select_respeaker_recognition_channel,
+)
 
 from robot import eyelids
 from robot import eyes
@@ -459,7 +463,7 @@ def audio_callback(indata, frames, time_info, status):
             print("⚠️", status)
             _last_stream_status_log_at = now
 
-    audio = indata[:, 0].copy()
+    audio = select_respeaker_recognition_channel(indata)[:, 0]
     n_samples = len(audio)
 
     # Circular buffer fill for audio_buffer
@@ -698,7 +702,7 @@ def run(return_audio=False):
             if live_command_doa_samples:
                 command_result = _qualify_command_doa(
                     live_command_doa_samples,
-                    live_command_doa_samples,
+                    stability_doa_samples,
                 )
                 if command_result["qualified"]:
                     head_tracker.turn_toward_bearing(
@@ -763,18 +767,21 @@ def run(return_audio=False):
                 frames.append(new_chunk.astype(np.float32, copy=False))
                 chunk_rms = float(np.sqrt(np.mean(new_chunk**2)))
 
-            if chunk_rms >= ACTIVE_RMS_THRESHOLD:
+            if new_chunk.size > 0:
                 try:
                     doa = mic.read("DOA_VALUE")
                     if (
                         len(doa) == 2
-                        and bool(doa[1])
                         and not robot_emotions.is_doa_suppressed()
                     ):
-                        sample = (float(doa[0]), 0.02)
-                        command_doa_samples.append(sample)
+                        # The callback delivers audio in blocks, not at the
+                        # polling interval. Count the captured audio duration
+                        # so short commands retain their full speech evidence.
+                        sample = (float(doa[0]), new_chunk.size / SAMPLE_RATE)
                         stability_doa_samples.append(sample)
-                        live_command_doa_samples.append(sample)
+                        if chunk_rms >= ACTIVE_RMS_THRESHOLD and bool(doa[1]):
+                            command_doa_samples.append(sample)
+                            live_command_doa_samples.append(sample)
                 except Exception as e:
                     print(f"⚠️ Command direction read error: {e}")
 
@@ -903,7 +910,10 @@ def run(return_audio=False):
                         current_time + RESPEAKER_RECONNECT_INTERVAL_SECONDS
                     )
                     try:
-                        mic = create_respeaker_or_raise()
+                        mic = create_respeaker_or_raise(
+                            recover=True,
+                            reset_first=True,
+                        )
                         print("✅ ReSpeaker control interface reconnected")
                         last_respeaker_error_at = 0.0
                     except Exception:
@@ -985,7 +995,7 @@ def run(return_audio=False):
                 and rms >= ACTIVE_RMS_THRESHOLD
                 and not robot_emotions.is_doa_suppressed()
             ):
-                wake_direction_history.append(float(angle))
+                wake_direction_history.append((time.monotonic(), float(angle)))
 
             predictions = model.predict(audio_int16)
 
@@ -1027,6 +1037,7 @@ def run(return_audio=False):
             rms_history.append(rms)
             peak_score = max(history)
             recent_peak_rms = max(rms_history)
+            wake_score_hits = sum(score >= THRESHOLD for score in history)
 
             if VERBOSE_RUNTIME_LOGS and (peak_score > 0.05 or stop_score > 0.05):
                 print(
@@ -1042,6 +1053,7 @@ def run(return_audio=False):
             # Start a pending wake detection.
             if (
                 peak_score >= THRESHOLD
+                and wake_score_hits >= WAKE_MIN_SCORE_HITS
                 and recent_peak_rms >= WAKE_MIN_RMS_THRESHOLD
                 and armed
                 and not pending_wake
@@ -1053,6 +1065,7 @@ def run(return_audio=False):
                 low_volume_candidate_logged = False
             elif (
                 peak_score >= THRESHOLD
+                and wake_score_hits >= WAKE_MIN_SCORE_HITS
                 and recent_peak_rms < WAKE_MIN_RMS_THRESHOLD
                 and armed
                 and not pending_wake
@@ -1105,7 +1118,11 @@ def run(return_audio=False):
                     # ends. Preserve those final readings instead of freezing
                     # the earlier angle from the model-detection instant.
                     post_wake_started_at = time.monotonic()
-                    active_wake_angles = list(wake_direction_history)
+                    history_cutoff = time.monotonic() - HEAD_TRACKING_WAKE_HISTORY_SECONDS
+                    active_wake_angles = [
+                        angle for sampled_at, angle in wake_direction_history
+                        if sampled_at >= history_cutoff
+                    ]
                     settled_wake_angles = []
                     settle_until = post_wake_started_at + min(
                         HEAD_TRACKING_WAKE_SETTLE_SECONDS,

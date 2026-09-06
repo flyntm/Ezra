@@ -16,6 +16,7 @@ from presentations.lesson_presentation import (
     print_rehearsal,
     _parse_slide_number,
     requested_start_slide,
+    stop_presentation,
     _SLIDE_JUMP_PATTERN,
     _normalize_presentation_command,
 )
@@ -28,6 +29,7 @@ from presentations.common import (
     present_introduction,
     present_name_origin,
 )
+import operating_mode
 from presentations.presenter import audience_look_targets, speak_with_head_motion
 
 
@@ -60,6 +62,21 @@ def controller_test_deck(deck):
 
 
 class PresentationCommandPatternTests(unittest.TestCase):
+    def tearDown(self):
+        lesson_presentation._session = None
+        operating_mode.set_mode(operating_mode.GENERAL)
+
+    def test_stop_presentation_closes_session_and_clears_reference(self):
+        session = unittest.mock.Mock()
+        lesson_presentation._session = session
+        operating_mode.set_mode(operating_mode.PRESENTATION)
+
+        self.assertTrue(stop_presentation())
+
+        session.stop.assert_called_once_with()
+        self.assertIsNone(lesson_presentation._session)
+        self.assertEqual(operating_mode.get_mode(), operating_mode.GENERAL)
+
     def test_show_us_slide_of_the_presentation(self):
         match = _SLIDE_JUMP_PATTERN.search(
             "yeah ezra show us slide 8 of the presentation"
@@ -270,7 +287,19 @@ class PowerPointDeckTests(unittest.TestCase):
             deck.slide_count,
         )
         self.assertIn("event.key==='Escape'||event.key===' '", rendered)
+        self.assertIn("ArrowRight:'next'", rendered)
+        self.assertIn("ArrowDown:'next'", rendered)
+        self.assertIn("ArrowLeft:'previous'", rendered)
+        self.assertIn("ArrowUp:'previous'", rendered)
+        self.assertNotIn("PageDown:'next'", rendered)
+        self.assertNotIn("PageUp:'previous'", rendered)
+        self.assertIn("'/control/narrate'", rendered)
+        self.assertIn("/control/go-to/${target}", rendered)
+        self.assertNotIn("r:'reveal'", rendered)
+        self.assertNotIn("R:'reveal'", rendered)
         self.assertIn("fetch('/skip'", rendered)
+        self.assertIn("function fitShapeText(shape)", rendered)
+        self.assertIn("shape.scrollHeight>shape.clientHeight", rendered)
 
 
 class ActsSessionTests(unittest.TestCase):
@@ -407,6 +436,14 @@ class ActsSessionTests(unittest.TestCase):
         )
         self.assertEqual(len(self.spoken), 2)
         self.assertIn("three decades", self.spoken[-1])
+
+    def test_bare_explain_narrates_current_slide(self):
+        self.session.start()
+        lesson_presentation._session = self.session
+        self.addCleanup(setattr, lesson_presentation, "_session", None)
+        self.assertTrue(handle_active_command("explain", self.session.speak))
+        self.assertEqual(len(self.spoken), 2)
+        self.assertIn("Welcome", self.spoken[-1])
 
     def test_marker_does_not_advance_without_playback_completion(self):
         session = LessonPresentationSession(
@@ -647,6 +684,102 @@ class ActsSessionTests(unittest.TestCase):
         session.reveal()
         self.assertTrue(calls[-1][1]["allow_keyboard_skip"])
         self.assertIn("on_playback_complete", calls[-1][1])
+
+    def test_keyboard_controls_use_session_navigation(self):
+        self.session.start()
+        spoken_before = len(self.spoken)
+        self.session.handle_keyboard_control("next")
+        self.assertEqual(self.session.slide_index, 1)
+        self.assertEqual(len(self.spoken), spoken_before + 1)
+        self.session.handle_keyboard_control("previous")
+        self.assertEqual(self.session.slide_index, 0)
+        self.assertEqual(len(self.spoken), spoken_before + 2)
+
+    def test_rapid_keyboard_navigation_discards_superseded_narration(self):
+        first_speech_started = threading.Event()
+        release_first_speech = threading.Event()
+        spoken = []
+
+        def speak(text, **callbacks):
+            spoken.append(text)
+            callbacks.get("on_playback_start", lambda: None)()
+            if len(spoken) == 1:
+                first_speech_started.set()
+                release_first_speech.wait(timeout=2.0)
+                return True
+            callbacks.get("on_playback_complete", lambda: None)()
+            return False
+
+        session = LessonPresentationSession(speak, self.slides, deck_path=DECK_PATH)
+        session.deck = controller_test_deck(session.deck)
+        session.start(narrate=False)
+
+        controls = [
+            threading.Thread(target=session.handle_keyboard_control, args=("next",))
+            for _ in range(3)
+        ]
+        controls[0].start()
+        self.assertTrue(first_speech_started.wait(timeout=1.0))
+        controls[1].start()
+        controls[2].start()
+        while session.slide_index < 3:
+            threading.Event().wait(0.01)
+        release_first_speech.set()
+        for control in controls:
+            control.join(timeout=2.0)
+
+        self.assertEqual(session.slide_index, 3)
+        self.assertEqual(len(spoken), 2)
+        self.assertIn("three decades", spoken[0])
+        self.assertIn("carefully investigated", spoken[1])
+
+    def test_keyboard_skip_discards_all_queued_narration(self):
+        first_speech_started = threading.Event()
+        release_first_speech = threading.Event()
+        spoken = []
+
+        def speak(text, **callbacks):
+            spoken.append(text)
+            callbacks.get("on_playback_start", lambda: None)()
+            first_speech_started.set()
+            release_first_speech.wait(timeout=2.0)
+            return True
+
+        session = LessonPresentationSession(speak, self.slides, deck_path=DECK_PATH)
+        session.deck = controller_test_deck(session.deck)
+        session.start(narrate=False)
+        controls = [
+            threading.Thread(target=session.handle_keyboard_control, args=("next",))
+            for _ in range(3)
+        ]
+        controls[0].start()
+        self.assertTrue(first_speech_started.wait(timeout=1.0))
+        controls[1].start()
+        controls[2].start()
+        while session.slide_index < 3:
+            threading.Event().wait(0.01)
+
+        session.handle_keyboard_control("skip")
+        release_first_speech.set()
+        for control in controls:
+            control.join(timeout=2.0)
+
+        self.assertEqual(session.slide_index, 3)
+        self.assertEqual(len(spoken), 1)
+
+    def test_enter_narrates_current_slide_without_moving(self):
+        self.session.start()
+        spoken_before = len(self.spoken)
+        self.session.handle_keyboard_control("narrate")
+        self.assertEqual(self.session.slide_index, 0)
+        self.assertEqual(len(self.spoken), spoken_before + 1)
+
+    def test_number_then_enter_jumps_without_narrating(self):
+        self.session.start()
+        spoken_before = len(self.spoken)
+        self.session.handle_keyboard_control("go-to:5")
+        self.assertEqual(self.session.slide_index, 4)
+        self.assertEqual(len(self.spoken), spoken_before)
 
     def test_display_answers_reveals_without_reading_script(self):
         self.session.start()

@@ -1,0 +1,60 @@
+{
+  "version": "2.0.0",
+  "presentation": {
+    "echo": false,
+    "reveal": "always",
+    "focus": false,
+    "panel": "dedicated",
+    "showReuseMessage": false,
+    "clear": false
+  },
+  "tasks": [
+    {
+      "label": "Ezra: Command Prompt",
+      "type": "shell",
+      "command": "/bin/bash",
+      "args": [
+        "-l"
+      ],
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": {
+        "focus": true,
+        "group": "ezra-terminals"
+      }
+    },
+    {
+      "label": "Ezra: Live Log",
+      "type": "shell",
+      "command": "journalctl",
+      "args": [
+        "--user-unit=ezra.service",
+        "-n",
+        "50",
+        "-f",
+        "-o",
+        "cat"
+      ],
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": {
+        "echo": true,
+        "group": "ezra-terminals",
+        "clear": true
+      }
+    },
+    {
+      "label": "Ezra: Open Terminals",
+      "dependsOn": [
+        "Ezra: Command Prompt",
+        "Ezra: Live Log"
+      ],
+      "dependsOrder": "parallel",
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    }
+  ]
+}

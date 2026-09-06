@@ -18,6 +18,15 @@ class ShutdownSignalTests(unittest.TestCase):
 
         self.assertTrue(state.shutting_down)
 
+    def test_normal_start_uses_ready_announcement(self):
+        self.assertEqual(service_runtime.startup_announcement(), "Ezra ready!")
+
+    def test_presentation_restart_uses_recovery_announcement(self):
+        self.assertEqual(
+            service_runtime.startup_announcement(resuming_presentation=True),
+            "I'm back!",
+        )
+
     @patch("service_runtime.signal.signal")
     def test_installs_sigterm_handler(self, register):
         service_runtime.install_shutdown_signal_handlers()

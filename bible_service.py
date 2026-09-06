@@ -216,7 +216,7 @@ def parse_bible_reference(command):
             continue
 
         remainder = normalized[match.end():].strip()
-        remainder = re.sub(r"^chapter\s+", "", remainder)
+        remainder = re.sub(r"^chapters?\s+", "", remainder)
         chapter, tail = _consume_number(remainder)
         if chapter is None or chapter < 1:
             continue
@@ -423,7 +423,7 @@ def get_bible_response(command, service=None):
         and re.search(r"\b(?:1|2|first|second)\s+peter\b", normalized) is None
     )
     looks_like_passage_request = (
-        re.search(r"\b(?:read|chapter|verse|verses)\b", normalized) is not None
+        re.search(r"\b(?:read|chapters?|verses?)\b", normalized) is not None
     )
     if mentions_unnumbered_peter and looks_like_passage_request:
         return "Do you mean First Peter or Second Peter?"
@@ -432,11 +432,11 @@ def get_bible_response(command, service=None):
     bookless_passage_request = (
         reference is None
         and re.search(r"\b(?:read|repeat)\b", normalized) is not None
-        and re.search(r"\b(?:chapter|verse|verses)\b", normalized) is not None
+        and re.search(r"\b(?:chapters?|verses?)\b", normalized) is not None
     )
     if bookless_passage_request and _last_reference is not None:
         contextual_command = re.sub(
-            r"\bchapter\b",
+            r"\bchapters?\b",
             f"{_last_reference.book_name} chapter",
             command,
             count=1,

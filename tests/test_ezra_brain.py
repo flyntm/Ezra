@@ -33,6 +33,7 @@ class EzraBrainTests(unittest.TestCase):
             {"emotion": "curious", "response": "A servo moves a robot part."},
         )
         request = post.call_args
+        self.assertIn('"Flynt"', request.kwargs["json"]["messages"][0]["content"])
         self.assertEqual(
             request.args[0],
             "http://127.0.0.1:8081/v1/chat/completions",
@@ -96,6 +97,27 @@ class EzraBrainTests(unittest.TestCase):
         self.assertEqual(result["response"], "First sentence. Second sentence!")
         self.assertEqual(result["emotion"], "happy")
         self.assertTrue(result["streamed"])
+        self.assertIn('"Flynt"', client.responses.stream.call_args.kwargs["input"][0]["content"])
+
+    def test_saved_name_is_sent_to_nonstreaming_cloud_with_empty_history(self):
+        client = Mock()
+        client.responses.create.return_value.output_text = '{"emotion":"happy","response":"Flynt."}'
+        with patch("ezra_brain.internet_access_allowed", return_value=True), patch(
+            "ezra_brain._get_openai_client", return_value=client
+        ):
+            ezra_brain._ask_openai([{"role": "user", "content": "What's my name?"}])
+        self.assertIn('"Flynt"', client.responses.create.call_args.kwargs["input"][0]["content"])
+
+    def test_saved_name_is_independent_of_conversation_history(self):
+        ezra_brain.conversation_history = []
+        self.assertIn('"Flynt"', ezra_brain._system_prompt())
+
+    def test_saved_name_can_be_changed_or_removed_in_configuration(self):
+        with patch("ezra_brain.PRIMARY_USER_NAME", "Alex"):
+            self.assertIn('"Alex"', ezra_brain._system_prompt())
+            self.assertNotIn('"Flynt"', ezra_brain._system_prompt())
+        with patch("ezra_brain.PRIMARY_USER_NAME", ""):
+            self.assertEqual(ezra_brain._system_prompt(), ezra_brain.SYSTEM_PROMPT)
 
     def test_streaming_json_decodes_escaped_text(self):
         extractor = ezra_brain._StreamingResponseText()

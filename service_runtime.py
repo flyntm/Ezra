@@ -5,6 +5,11 @@ import signal
 import state
 
 
+def startup_announcement(resuming_presentation=False):
+    """Return the recovery greeting when startup will restore a presentation."""
+    return "I'm back!" if resuming_presentation else "Ezra ready!"
+
+
 def handle_shutdown_signal(signum, _frame):
     """Turn systemd's stop request into Ezra's normal cleanup path."""
 

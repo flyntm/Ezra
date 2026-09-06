@@ -153,7 +153,10 @@ def _scripture_chunks(question, database_path):
         key=lambda item: item[0],
         reverse=True,
     )
-    minimum = max(3, len(query_terms) // 2)
+    # Topical Bible search must clear a deliberately high bar. Short accidental
+    # STT phrases can otherwise share a few generic words with one of 31,000+
+    # verses and force an unrelated Scripture answer.
+    minimum = max(4, (len(query_terms) + 1) // 2)
     return [
         ContextChunk("Scripture", f"{book} {chapter}:{verse}", text)
         for score, (book, chapter, verse, text) in ranked[:2]

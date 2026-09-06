@@ -31,13 +31,19 @@ FOLLOW_UP_CANCEL_PHRASES = {
 # Single words that are meaningful on their own. Other one-word transcripts
 # are commonly coughs, filler, or wake-word handoff noise such as "pfft".
 ACTIONABLE_SINGLE_WORD_COMMANDS = {
+    "back",
+    "explain",
     "exit",
+    "forward",
     "goodbye",
+    "next",
     "poweroff",
+    "previous",
     "quit",
     "shutdown",
     "stop",
     "time",
+    "why",
 }
 
 

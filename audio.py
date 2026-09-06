@@ -30,7 +30,10 @@ from config import (
     QUIET_STARTUP,
     VERBOSE_RUNTIME_LOGS,
 )
-from respeaker_io import create_respeaker_or_raise
+from respeaker_io import (
+    create_respeaker_or_raise,
+    select_respeaker_recognition_channel,
+)
 
 
 # Most recently completed command bearing. This small diagnostic state keeps
@@ -121,7 +124,7 @@ def _qualified_command_doa(raw_angles):
 # RESPEAKER SETUP
 # --------------------------------------------------
 
-mic = create_respeaker_or_raise()
+mic = create_respeaker_or_raise(recover=True)
 
 if not QUIET_STARTUP:
     print("✅ ReSpeaker hardware VAD ready")
@@ -132,7 +135,7 @@ if not QUIET_STARTUP:
 # --------------------------------------------------
 
 
-def listen(wake_audio=None, wake_text="EZRA"):
+def listen(wake_audio=None, wake_text="EZRA", *, command_timeout=COMMAND_TIMEOUT):
     """
     Listen for a command after wake-word detection using ReSpeaker hardware VAD.
 
@@ -141,6 +144,7 @@ def listen(wake_audio=None, wake_text="EZRA"):
 
     wake_text is used to adjust the tail-ignore window for the command
     capture path.
+    command_timeout controls how long to wait for speech to begin.
     """
 
     global _last_command_doa
@@ -202,7 +206,7 @@ def listen(wake_audio=None, wake_text="EZRA"):
     audio_queue = queue.Queue()
 
     def audio_callback(indata, frames_count, time_info, status):
-        audio_queue.put(indata.copy())
+        audio_queue.put(select_respeaker_recognition_channel(indata))
 
     with sd.InputStream(
         device=MIC_DEVICE,
@@ -268,7 +272,7 @@ def listen(wake_audio=None, wake_text="EZRA"):
                 print("⏳ Wake-tail ignore window ended")
 
             if not wake_tail_ignored:
-                if time.time() - start_time >= COMMAND_TIMEOUT:
+                if time.time() - start_time >= command_timeout:
                     print("⚠️ No command speech detected within timeout")
                     break
                 time.sleep(0.05)
@@ -288,7 +292,7 @@ def listen(wake_audio=None, wake_text="EZRA"):
                         pre_roll_samples = 0
 
                     print("🎤 Command speech detected")
-                elif time.time() - start_time >= COMMAND_TIMEOUT:
+                elif time.time() - start_time >= command_timeout:
                     print("⚠️ No command speech detected within timeout")
                     break
             else:
@@ -319,19 +323,19 @@ def listen(wake_audio=None, wake_text="EZRA"):
                 if time.time() - command_start_time >= MAX_COMMAND_TIME:
                     print("⚠️ Maximum command time reached")
                     break
-            elif time.time() - start_time >= COMMAND_TIMEOUT:
+            elif time.time() - start_time >= command_timeout:
                 print("⚠️ No command speech detected within timeout")
                 break
 
             # Defensive fallback if state desyncs.
-            if time.time() - start_time >= (COMMAND_TIMEOUT + MAX_COMMAND_TIME + 1.0):
+            if time.time() - start_time >= (command_timeout + MAX_COMMAND_TIME + 1.0):
                 print("⚠️ Maximum command time reached")
                 break
 
             time.sleep(0.05)
 
     # Convert frames to numpy array.
-    if not frames:
+    if not command_started or not frames:
         print("⚠️ No audio captured")
         return None
 

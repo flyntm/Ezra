@@ -238,7 +238,7 @@ ENABLE_PERSISTENT_PIPER = True
 TTS_MODEL_PATH = "/home/flyntm/projects/ezra/voices/en_US-bryce-medium.onnx"
 
 #  Talking Speed - Piper phoneme duration. Lower is faster; 1.0 is the voice model's default.
-TTS_LENGTH_SCALE = 0.85
+TTS_LENGTH_SCALE = 0.95
 
 # Text inside [Emph]...[/Emph] is spoken more deliberately. Higher is slower.
 TTS_EMPHASIS_LENGTH_SCALE_MULTIPLIER = 1.35
@@ -452,6 +452,10 @@ LOCAL_AI_DISABLE_THINKING = True
 # Max conversation history length
 MAX_HISTORY = 12
 
+# Persistent name of Ezra's primary user. Set to "" to remove this memory.
+# Loaded on startup; independent of the temporary conversation history.
+PRIMARY_USER_NAME = "Flynt"
+
 
 # =========================
 # COMMAND NORMALIZATION
@@ -519,11 +523,17 @@ DEBUG_AUDIO_SAMPLE_RATE = 16000
 
 WAKE_MIC_DEVICE = MIC_DEVICE
 WAKE_SAMPLE_RATE = 16000
-WAKE_CHANNELS = 1
+# Firmware 2.09 exposes only native 2-channel capture. Open both channels, then
+# retain channel 0 so the existing wake and stop models keep their calibration.
+WAKE_CHANNELS = 2
 WAKE_BLOCK_SIZE = 1024
 
 WAKE_THRESHOLD = 0.20
 WAKE_REARM_THRESHOLD = 0.05
+
+# Require the wake model to cross its threshold in more than one recent audio
+# block. A single score spike is commonly caused by lyrics or transient sounds.
+WAKE_MIN_SCORE_HITS = 2
 
 # Reject very quiet model matches caused by room/mechanical background noise.
 # This is evaluated against the peak RMS over the same recent blocks used for
@@ -574,10 +584,15 @@ WAKE_MIC_RELEASE_DELAY = 0.08
 
 LISTEN_MIC_DEVICE = MIC_DEVICE
 LISTEN_SAMPLE_RATE = 16000
-LISTEN_CHANNELS = 1
+LISTEN_CHANNELS = 2
 LISTEN_BLOCKSIZE = 1024
 
 LISTEN_COMMAND_TIMEOUT = 5.0
+# In general mode, allow another question without the wake word after answers.
+# Presentation mode always returns to wake-word detection after an answer.
+ENABLE_FOLLOW_UP_LISTENING = True
+# Seconds to wait for follow-up speech to begin.
+FOLLOW_UP_LISTEN_SECONDS = 5.0
 LISTEN_MAX_COMMAND_TIME = 10.0
 
 LISTEN_PRE_ROLL_SECONDS = 0.75

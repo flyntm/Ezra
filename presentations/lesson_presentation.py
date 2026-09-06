@@ -13,6 +13,7 @@ from config import (
     SCRIPTED_TTS_SENTENCE_SILENCE,
 )
 import presentation_recovery
+import operating_mode
 from service_watchdog import watchdog
 
 from .browser_slideshow import BrowserSlideshow
@@ -83,6 +84,7 @@ _NARRATE_PATTERN = re.compile(
     r"\b(?:please\s+)?(?:"
     r"tell\s+(?:us|me)\s+about\s+(?:this|the)\s+slide"
     r"|explain\s+(?:this|the)\s+slide"
+    r"|explain\s*(?:please)?[.!?]?$"
     r")\b",
     re.IGNORECASE,
 )
@@ -236,9 +238,41 @@ class LessonPresentationSession:
         self.deck = PowerPointDeck.load(deck_path or discover_presentation())
         self.persist_recovery = slideshow is None
         self.slideshow = slideshow or BrowserSlideshow(self.deck.path)
+        if hasattr(self.slideshow, "control_handler"):
+            self.slideshow.control_handler = self.handle_keyboard_control
         self.slide_index = 0
         self.answer_revealed = False
         self.active = False
+        self._narration_lock = threading.RLock()
+        # Browser controls arrive on independent HTTP worker threads. Keep a
+        # generation so narration queued by an earlier key press cannot run
+        # after a later key press has already selected another slide.
+        self._navigation_generation = 0
+
+    def _navigation_changed(self):
+        self._navigation_generation += 1
+        return self._navigation_generation
+
+    def handle_keyboard_control(self, action):
+        """Apply a narrated navigation request from the kiosk browser."""
+        if not self.active:
+            return
+        try:
+            if action == "next":
+                self.next()
+            elif action == "previous":
+                previous_index = self.slide_index
+                self.previous()
+                if self.slide_index != previous_index:
+                    self.narrate_current()
+            elif action == "narrate":
+                self.narrate_current()
+            elif action == "skip":
+                self._navigation_changed()
+            elif action.startswith("go-to:"):
+                self.go_to(int(action.removeprefix("go-to:")))
+        except PresentationError as exc:
+            self.speak(str(exc))
 
     def _persist(self):
         if self.active and self.persist_recovery:
@@ -265,7 +299,19 @@ class LessonPresentationSession:
             return self._speak_current()
         return False
 
-    def _speak_current(self):
+    def _speak_current(self, expected_generation=None):
+        if expected_generation is None:
+            expected_generation = self._navigation_generation
+        with self._narration_lock:
+            if expected_generation != self._navigation_generation:
+                print(
+                    "[presentation] narration_discarded=True "
+                    "reason=superseded_navigation"
+                )
+                return True
+            return self._speak_current_unlocked(expected_generation)
+
+    def _speak_current_unlocked(self, expected_generation):
         slide_number = self.slide_index + 1
         automatic = self.deck.auto_advance[self.slide_index]
         playback_complete = threading.Event()
@@ -311,9 +357,17 @@ class LessonPresentationSession:
             )
             return interrupted
 
+        if expected_generation != self._navigation_generation:
+            print(
+                f"[presentation] slide={slide_number} "
+                "advancement_command=none reason=superseded_navigation"
+            )
+            return True
+
         if automatic and playback_complete.is_set():
             if self.slide_index < self.deck.slide_count - 1:
                 self.slide_index += 1
+                expected_generation = self._navigation_changed()
                 self.slideshow.go_to(self.slide_index)
                 self.answer_revealed = False
                 if self.deck.reveal_slides[self.slide_index]:
@@ -324,7 +378,7 @@ class LessonPresentationSession:
                     f"[presentation] slide={slide_number} "
                     f"advancement_command=next resulting_slide={self.slide_index + 1}"
                 )
-                return self._speak_current()
+                return self._speak_current(expected_generation)
             else:
                 print(
                     f"[presentation] slide={slide_number} "
@@ -343,6 +397,7 @@ class LessonPresentationSession:
             self.speak("This is the final slide.")
             return False
         self.slide_index += 1
+        generation = self._navigation_changed()
         self.slideshow.go_to(self.slide_index)
         self.answer_revealed = False
         if self.deck.reveal_slides[self.slide_index]:
@@ -353,7 +408,7 @@ class LessonPresentationSession:
             f"[presentation] navigation_command=next "
             f"resulting_slide={self.slide_index + 1}"
         )
-        return self._speak_current()
+        return self._speak_current(generation)
 
     def previous(self):
         self._require_active()
@@ -361,6 +416,7 @@ class LessonPresentationSession:
             self.speak("This is the first slide.")
             return False
         self.slide_index -= 1
+        self._navigation_changed()
         self.slideshow.go_to(self.slide_index)
         self.answer_revealed = False
         if self.deck.reveal_slides[self.slide_index]:
@@ -382,6 +438,7 @@ class LessonPresentationSession:
             )
         self.slideshow.go_to(slide_number - 1)
         self.slide_index = slide_number - 1
+        self._navigation_changed()
         self.answer_revealed = False
         if self.deck.reveal_slides[self.slide_index]:
             self.slideshow.reveal()
@@ -400,6 +457,7 @@ class LessonPresentationSession:
             if number == question_number and not self.deck.reveal_slides[index]:
                 self.slideshow.go_to(index)
                 self.slide_index = index
+                self._navigation_changed()
                 self.answer_revealed = False
                 self._persist()
                 return
@@ -416,6 +474,7 @@ class LessonPresentationSession:
                 and self.deck.reveal_slides[next_index]
             ):
                 self.slide_index = next_index
+                self._navigation_changed()
                 self.slideshow.go_to(self.slide_index)
                 self.answer_revealed = False
             else:
@@ -510,6 +569,17 @@ def has_active_presentation():
     return _session is not None and _session.active
 
 
+def stop_presentation():
+    """Close the active slideshow and discard its restart state."""
+    global _session
+    if _session is None:
+        return False
+    _session.stop()
+    _session = None
+    operating_mode.set_mode(operating_mode.GENERAL)
+    return True
+
+
 def start_presentation(
     speak,
     rehearsal=False,
@@ -545,6 +615,7 @@ def start_presentation(
         deck_path=deck_path,
     )
     _session.start(slide_number=slide_number, narrate=narrate)
+    operating_mode.set_mode(operating_mode.PRESENTATION)
     if revealed and _session.deck.reveal_slides[_session.slide_index]:
         _session.slideshow.reveal()
         _session.answer_revealed = True
@@ -616,8 +687,7 @@ def handle_active_command(command, speak):
     close_bible_display()
     try:
         if _STOP_PATTERN.search(navigation_command):
-            _session.stop()
-            _session = None
+            stop_presentation()
             speak("Presentation stopped.")
             return True
         if _NEXT_PATTERN.search(navigation_command):

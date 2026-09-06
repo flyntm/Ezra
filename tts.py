@@ -22,7 +22,10 @@ from config import *
 from ezra_emotion import set_emotion, set_talk_level, set_temporary_emotion
 from mouth_sync import build_mouth_envelope
 from persistent_piper import PersistentPiper
-from respeaker_io import create_respeaker_or_raise
+from respeaker_io import (
+    create_respeaker_or_raise,
+    select_respeaker_recognition_channel,
+)
 import state
 from command_timing import (
     note_speech_finished,
@@ -278,7 +281,7 @@ def _open_stop_microphone(audio_callback):
                 stream = sd.InputStream(
                     device=device,
                     samplerate=WAKE_SAMPLE_RATE,
-                    channels=1,
+                    channels=WAKE_CHANNELS,
                     dtype="float32",
                     blocksize=WAKE_BLOCK_SIZE,
                     callback=audio_callback,
@@ -319,7 +322,7 @@ def _monitor_stop_phrase(stop_event, ready_event=None):
     stop_hits = deque(maxlen=MID_RESPONSE_STOP_GUARD_HITS)
 
     def audio_callback(indata, frames, time_info, status):
-        audio_queue.append(indata[:, 0].copy())
+        audio_queue.append(select_respeaker_recognition_channel(indata)[:, 0])
 
     stream = None
     try:

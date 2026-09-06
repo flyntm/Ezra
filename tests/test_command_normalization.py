@@ -24,6 +24,11 @@ class RehearsalCommandTests(unittest.TestCase):
     def test_arbitrary_single_word_remains_unclear(self):
         self.assertTrue(is_unclear_single_word("pfft"))
 
+    def test_single_word_presentation_commands_are_actionable(self):
+        for command in ("explain", "next", "previous", "forward", "back"):
+            with self.subTest(command=command):
+                self.assertFalse(is_unclear_single_word(command))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 
 import ezra_brain
+import operating_mode
 from lesson_context import ContextChunk, augment_question, retrieve_context
 
 
@@ -19,8 +20,10 @@ class LessonContextTests(unittest.TestCase):
         lesson_context._pending_question = None
         self.temporary = tempfile.TemporaryDirectory()
         self.directory = Path(self.temporary.name)
+        operating_mode.set_mode(operating_mode.GENERAL)
 
     def tearDown(self):
+        operating_mode.set_mode(operating_mode.GENERAL)
         self.temporary.cleanup()
 
     def test_reads_every_jsonl_file_and_labels_it_study_book(self):
@@ -112,6 +115,26 @@ class LessonContextTests(unittest.TestCase):
         self.assertEqual(chunks[0].source, "Scripture")
         self.assertEqual(chunks[0].label, "Acts 1:8")
 
+    def test_accidental_stt_overlap_does_not_force_scripture(self):
+        database = self.directory / "bible.sqlite3"
+        with sqlite3.connect(database) as connection:
+            connection.execute(
+                "CREATE TABLE verses (book_id TEXT, book_name TEXT, "
+                "chapter INTEGER, verse INTEGER, text TEXT)"
+            )
+            connection.execute(
+                "INSERT INTO verses VALUES ('ECC', 'Ecclesiastes', 10, 20, "
+                "'A bird in the sky may carry your voice.')"
+            )
+
+        chunks = retrieve_context(
+            "voice assistant commands may include the sky blue",
+            directory=self.directory,
+            database_path=database,
+        )
+
+        self.assertEqual(chunks, [])
+
     def test_powerpoint_files_are_not_answer_sources(self):
         (self.directory / "lesson.pptx").write_bytes(
             b"distinctive speaker note answer"
@@ -177,8 +200,13 @@ class LessonContextTests(unittest.TestCase):
 class BrainRetrievalTests(unittest.TestCase):
     def setUp(self):
         ezra_brain.conversation_history = []
+        operating_mode.set_mode(operating_mode.GENERAL)
+
+    def tearDown(self):
+        operating_mode.set_mode(operating_mode.GENERAL)
 
     def test_brain_uses_augmented_question_but_stores_original(self):
+        operating_mode.set_mode(operating_mode.PRESENTATION)
         with patch("ezra_brain.augment_question", return_value="QUESTION + SOURCES"), \
              patch.dict("os.environ", {"EZRA_AI_PROVIDER": "local"}), \
              patch(
@@ -189,6 +217,18 @@ class BrainRetrievalTests(unittest.TestCase):
 
         self.assertEqual(ask_local.call_args.args[0][-1]["content"], "QUESTION + SOURCES")
         self.assertEqual(ezra_brain.conversation_history[0]["content"], "QUESTION")
+
+    def test_general_mode_does_not_retrieve_presentation_context(self):
+        with patch("ezra_brain.augment_question") as augment, \
+             patch.dict("os.environ", {"EZRA_AI_PROVIDER": "local"}), \
+             patch(
+                 "ezra_brain._ask_local",
+                 return_value='{"emotion":"neutral","response":"Answer."}',
+             ) as ask_local:
+            ezra_brain.ask_ezra("How are you?")
+
+        augment.assert_not_called()
+        self.assertEqual(ask_local.call_args.args[0][-1]["content"], "How are you?")
 
 
 if __name__ == "__main__":

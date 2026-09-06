@@ -7,6 +7,8 @@ import time
 from pathlib import Path
 
 import state
+import operating_mode
+import presentation_recovery
 
 from audio import get_last_command_doa, listen
 from audio_debug import playback_diagnostic, save_debug_wav
@@ -30,9 +32,9 @@ from item_tests import display_command_text_diagnostic, display_doa_diagnostic
 from local_ai_server import start_local_ai_server, stop_local_ai_server
 from network_status import internet_access_allowed
 from network_status import start_connectivity_monitor, stop_connectivity_monitor
-from service_runtime import install_shutdown_signal_handlers
+from service_runtime import install_shutdown_signal_handlers, startup_announcement
 from service_watchdog import watchdog
-from presentations import restore_presentation
+from presentations import restore_presentation, stop_presentation
 from stt import transcribe
 from thinking_comments import prepare_thinking_comments, start_comment
 from tts import generate_speech_file, prepare_speech_cache, speak, speak_cached
@@ -86,9 +88,15 @@ def acknowledge_wake_word(
     set_emotion(EMOTION_LISTENING)
     speak_cached(response)
 
+    return listen_for_follow_up(command_timing=command_timing)
+
+
+def listen_for_follow_up(command_timing=None, timeout=LISTEN_COMMAND_TIMEOUT):
+    """Listen without a wake word, showing the two-LED listening expression."""
     while True:
+        set_emotion(EMOTION_LISTENING)
         print("👂 Listening for a follow-up command...")
-        audio = listen(wake_text="")
+        audio = listen(wake_text="", command_timeout=timeout)
         if audio is None:
             break
 
@@ -111,7 +119,7 @@ def acknowledge_wake_word(
             print(f"👂 Follow-up ignored or canceled: {command}")
             break
 
-        if command and not is_wake_word_only(command) and len(command.split()) >= 2:
+        if command and not is_wake_word_only(command) and not is_unclear_single_word(command):
             follow_up_bearing = get_last_command_doa()
             if (
                 follow_up_bearing is not None
@@ -222,6 +230,7 @@ def shutdown_robot():
 
     try:
         close_bible_display()
+        stop_presentation()
         stop_local_ai_server()
 
         if ENABLE_HEAD_TRACKING and not ENABLE_INTERACTION_DIAGNOSTIC:
@@ -261,8 +270,11 @@ def main():
 
         if head_tracker.center_on_startup():
             print("✅ Head centered for startup")
-    print("🤖 Ezra ready!\n")
-    speak("Ezra ready!")
+    announcement = startup_announcement(
+        resuming_presentation=presentation_recovery.load() is not None,
+    )
+    print(f"🤖 {announcement}\n")
+    speak(announcement)
 
     # A watchdog restart should return the audience to the last displayed
     # slide without repeating its narration.
@@ -277,18 +289,33 @@ def main():
 
     log_speaker_output_sanity()
     interaction_count = 0
+    follow_up_ready = False
 
     try:
         while not state.shutting_down:
 
             watchdog.idle()
 
-            # Wait for Ezra or Hey Ezra.
-            wake_text, wake_audio = wait_for_wake_word_with_audio()
+            # Answers open a fresh listening window; silence returns to wake detection.
+            following_up = False
+            if (
+                follow_up_ready
+                and operating_mode.get_mode() != operating_mode.PRESENTATION
+            ):
+                follow_up_ready = False
+                watchdog.busy()
+                wake_text = listen_for_follow_up(timeout=FOLLOW_UP_LISTEN_SECONDS)
+                if wake_text is None:
+                    continue
+                wake_audio = None
+                following_up = True
+            else:
+                follow_up_ready = False
+                wake_text, wake_audio = wait_for_wake_word_with_audio()
             watchdog.busy()
 
             command_timing = None
-            if ENABLE_COMMAND_TIMING_DIAGNOSTIC:
+            if ENABLE_COMMAND_TIMING_DIAGNOSTIC and not following_up:
                 now = time.monotonic()
                 command_timing = CommandTiming(get_last_wake_detected_at() or now)
                 capture_timing = get_last_command_capture_timing()
@@ -366,7 +393,7 @@ def main():
 
             # Check whether the wake result also contained a command.
             command = strip_wake_word(wake_text)
-            command_was_transcribed = False
+            command_was_transcribed = following_up
             comment_cancel = None
             comment_thread = None
             thinking_started_at = None
@@ -486,6 +513,7 @@ def main():
                 # Run optional audio replay diagnostics after Ezra responds.
                 maybe_playback_diagnostic()
                 finish_command_timing(command_timing, "local command")
+                follow_up_ready = ENABLE_FOLLOW_UP_LISTENING
                 continue
 
             # Send all other commands to Ezra's brain.
@@ -614,10 +642,14 @@ def main():
                 "listening",
             )
 
-            set_emotion(mapped_emotion)
             if not result.get("streamed"):
-                speak(response)
+                set_emotion(mapped_emotion)
+                if speak(response):
+                    result["interrupted"] = True
 
+            # Streamed speech has already finished. Do not reapply the model's
+            # expression (especially thinking) while waiting for the next wake.
+            set_emotion(EMOTION_STANDBY)
             if (
                 not result.get("interrupted")
                 and emotion in POST_RESPONSE_SMILE_EMOTIONS
@@ -633,6 +665,7 @@ def main():
 
             reset_idle_timer()
             finish_command_timing(command_timing)
+            follow_up_ready = ENABLE_FOLLOW_UP_LISTENING and not result.get("interrupted")
 
     except KeyboardInterrupt:
         pass

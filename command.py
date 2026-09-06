@@ -6,6 +6,7 @@ import subprocess
 import time
 
 import state
+import operating_mode
 
 from bible_display import close_bible_display, show_bible_passage, split_passage_response
 from bible_service import get_bible_response
@@ -60,7 +61,10 @@ VOLUME_WORDS = {
 VOLUME_WORD_PATTERN = r"\b(?:volume|volumes|value|vol|aim|bomb)\b"
 VOLUME_FILLER_WORDS = {"to", "at", "on", "of", "the", "a"}
 POWEROFF_PATTERN = r"\b(?:shutdown|shut down|power off|poweroff)\b"
-QUIT_PROGRAM_PATTERN = r"\b(?:quit|exit)(?:\s+program)?\b|\bstop\s+program\b"
+QUIT_PROGRAM_PATTERN = (
+    r"\b(?:quit|exit)(?:\s+program(?:ming)?)?\b"
+    r"|\bstop\s+program(?:ming)?\b"
+)
 
 
 def parse_volume_level(command):
@@ -173,6 +177,19 @@ def handle_local_command(command):
     """Handle a command locally, returning whether it was handled."""
 
     text_lower = command.lower()
+
+    if operating_mode.status_requested(command):
+        current_mode = operating_mode.get_mode()
+        speak(f"I'm in {current_mode.title()} mode.")
+        reset_idle_timer()
+        return True
+
+    requested_mode = operating_mode.requested_mode(command)
+    if requested_mode is not None:
+        operating_mode.set_mode(requested_mode)
+        speak(f"{requested_mode.title()} mode.")
+        reset_idle_timer()
+        return True
 
     if handle_presentation_command(command, speak):
         reset_idle_timer()

@@ -12,6 +12,7 @@ from .lesson_presentation import (
     is_start_request as is_presentation_request,
     requested_start_slide,
     start_presentation,
+    stop_presentation,
     restore_presentation,
 )
 
@@ -25,5 +26,6 @@ __all__ = [
     "present_introduction",
     "present_name_origin",
     "start_presentation",
+    "stop_presentation",
     "restore_presentation",
 ]

@@ -36,6 +36,7 @@ SAMPLE_RATE = DEBUG_AUDIO_SAMPLE_RATE
 # while avoiding false negatives on quiet speech.
 MIN_AUDIO_SECONDS = 0.75  # Minimum command duration (0.75 sec)
 MIN_AUDIO_PEAK = 0.008  # Minimum peak amplitude to transcribe
+WHISPER_CONTEXT_PROMPT = "A person is speaking to a voice assistant named Ezra."
 
 TEMP_WAV_FILE = "temp.wav"
 # --------------------------------------------------
@@ -129,6 +130,16 @@ def transcribe(audio):
         _debug(f"Audio peak: {peak:.6f}")
         _debug(f"Audio RMS: {rms:.6f}")
 
+        # Reject quiet input before normalization. Checking the peak after
+        # scaling would make every non-empty recording appear to peak at 0.9.
+        if duration < MIN_AUDIO_SECONDS:
+            print(f"⚠️ Skipping STT: recording too short " f"({duration:.2f} sec)")
+            return ""
+
+        if peak < MIN_AUDIO_PEAK:
+            print(f"⚠️ Skipping STT: audio too quiet " f"(peak={peak:.6f})")
+            return ""
+
         # Normalize audio to a target peak to improve STT accuracy.
         # Always scale so the maximum peak is near 0.9 (about -1 dBFS).
         if peak > 0:
@@ -145,14 +156,6 @@ def transcribe(audio):
         # --------------------------------------------------
         # REJECT CLEARLY EMPTY RECORDINGS
         # --------------------------------------------------
-
-        if duration < MIN_AUDIO_SECONDS:
-            print(f"⚠️ Skipping STT: recording too short " f"({duration:.2f} sec)")
-            return ""
-
-        if peak < MIN_AUDIO_PEAK:
-            print(f"⚠️ Skipping STT: audio too quiet " f"(peak={peak:.6f})")
-            return ""
 
         # Keep a WAV copy for troubleshooting.
         # Write the debug WAV as 16-bit PCM so playback tools like aplay
@@ -190,14 +193,10 @@ def transcribe(audio):
             segments, _ = model.transcribe(
                 audio_16k,
                 language=WHISPER_LANGUAGE,
-                # Bias decoding toward a short voice command following the
-                # wake phrase, which helps reduce "here's what" style
-                # hallucinations from wake-word audio.
-                initial_prompt=(
-                    "Ezra voice assistant commands may include: Why is the sky "
-                    "blue? Explain why the sky is blue. What time is it? Tell me "
-                    "a joke."
-                ),
+                # Give Whisper context without suggesting specific commands.
+                # Command examples can be repeated as hallucinations when the
+                # input contains music, noise, or very weak speech.
+                initial_prompt=WHISPER_CONTEXT_PROMPT,
                 beam_size=WHISPER_BEAM_SIZE,
                 # Prevent prior context bleeding into new commands.
                 condition_on_previous_text=False,
@@ -228,6 +227,16 @@ def transcribe(audio):
 
         if not text:
             print("⚠️ No speech recognized")
+            return ""
+
+        # Weak/noisy recordings can cause Whisper to repeat its own context
+        # prompt verbatim. It is metadata, never a command from the user.
+        normalized_text = " ".join(_WORD for _WORD in text.casefold().split())
+        normalized_prompt = " ".join(
+            _WORD for _WORD in WHISPER_CONTEXT_PROMPT.casefold().split()
+        )
+        if normalized_text.strip(" .,!?") == normalized_prompt.strip(" .,!?"):
+            print("⚠️ Ignoring Whisper context-prompt echo")
             return ""
 
         _debug(f"You said: {text}")

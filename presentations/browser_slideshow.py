@@ -176,7 +176,36 @@ body.revealed .reveal{{opacity:1;transform:none}}
 const viewport=document.getElementById('viewport');
 function fit(){{const scale=Math.min(innerWidth/{STAGE_WIDTH},innerHeight/{STAGE_HEIGHT});viewport.style.transform=`translate(-50%,-50%) scale(${{scale}})`;}}
 addEventListener('resize',fit);fit();
-addEventListener('keydown',event=>{{if(event.key==='Escape'||event.key===' '){{event.preventDefault();fetch('/skip',{{method:'POST'}}).catch(()=>{{}});}}}});
+// PowerPoint lays text out using Calibri metrics. Chromium may substitute a
+// wider Linux font, so reduce only the text boxes that would otherwise clip.
+function fitShapeText(shape){{
+  const spans=[...shape.querySelectorAll('span')];
+  if(!spans.length)return;
+  for(const span of spans){{
+    if(!span.dataset.originalFontSize)span.dataset.originalFontSize=parseFloat(span.style.fontSize);
+  }}
+  let scale=1;
+  const apply=()=>spans.forEach(span=>span.style.fontSize=`${{parseFloat(span.dataset.originalFontSize)*scale}}px`);
+  apply();
+  while(scale>0.6&&(shape.scrollHeight>shape.clientHeight+1||shape.scrollWidth>shape.clientWidth+1)){{
+    scale-=0.02;
+    apply();
+  }}
+}}
+function fitSlideText(slide){{slide.querySelectorAll('.shape').forEach(fitShapeText);}}
+document.querySelectorAll('.slide').forEach(fitSlideText);
+const controls={{ArrowRight:'next',ArrowDown:'next',ArrowLeft:'previous',ArrowUp:'previous'}};
+let slideNumber='';
+let slideNumberTimer;
+function rememberDigit(digit){{slideNumber+=digit;clearTimeout(slideNumberTimer);slideNumberTimer=setTimeout(()=>{{slideNumber='';}},5000);}}
+addEventListener('keydown',event=>{{
+  if(/^\d$/.test(event.key)){{event.preventDefault();rememberDigit(event.key);return;}}
+  if(event.key==='Backspace'&&slideNumber){{event.preventDefault();slideNumber=slideNumber.slice(0,-1);return;}}
+  if(event.key==='Enter'){{event.preventDefault();const target=slideNumber;slideNumber='';clearTimeout(slideNumberTimer);const path=target?`/control/go-to/${{target}}`:'/control/narrate';fetch(path,{{method:'POST'}}).catch(()=>{{}});return;}}
+  if(event.key==='Escape'||event.key===' '){{event.preventDefault();slideNumber='';clearTimeout(slideNumberTimer);fetch('/skip',{{method:'POST'}}).catch(()=>{{}});return;}}
+  const action=controls[event.key];
+  if(action){{event.preventDefault();fetch(`/control/${{action}}`,{{method:'POST'}}).catch(()=>{{}});}}
+}});
 let last='';
 async function update(){{try{{const response=await fetch('/state',{{cache:'no-store'}});const state=await response.json();const key=JSON.stringify(state);if(key!==last){{document.querySelectorAll('.slide').forEach((s,i)=>s.classList.toggle('active',i===state.slide));document.body.classList.toggle('revealed',state.revealed);last=key;}}}}catch(e){{}}setTimeout(update,100);}}
 update();
@@ -197,6 +226,7 @@ class BrowserSlideshow:
         self.browser_log = None
         self._html = ""
         self.skip_event = threading.Event()
+        self.control_handler = None
 
     @staticmethod
     def missing_commands():
@@ -228,9 +258,32 @@ class BrowserSlideshow:
             def do_POST(self):
                 if self.path.startswith("/skip"):
                     slideshow.skip_event.set()
+                    if slideshow.control_handler:
+                        # Also invalidate narration requests queued by rapid
+                        # navigation. Otherwise they start speaking as soon as
+                        # the currently playing audio acknowledges this skip.
+                        slideshow.control_handler("skip")
                     self.send_response(204)
                     self.end_headers()
                     return
+                if self.path.startswith("/control/"):
+                    action = self.path.removeprefix("/control/").split("?", 1)[0]
+                    go_to = action.removeprefix("go-to/")
+                    valid_action = action in {"next", "previous", "narrate"}
+                    if action.startswith("go-to/") and go_to.isdigit():
+                        action = f"go-to:{go_to}"
+                        valid_action = True
+                    if valid_action and slideshow.control_handler:
+                        slideshow.skip_event.set()
+                        # Do not hold the browser request open while narration runs.
+                        threading.Thread(
+                            target=slideshow.control_handler,
+                            args=(action,),
+                            daemon=True,
+                        ).start()
+                        self.send_response(202)
+                        self.end_headers()
+                        return
                 self.send_response(404)
                 self.end_headers()
 

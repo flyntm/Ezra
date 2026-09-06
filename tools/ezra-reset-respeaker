@@ -1,0 +1,15 @@
+#!/bin/sh
+
+set -eu
+
+usb_device="1-2"
+usb_driver="/sys/bus/usb/drivers/usb"
+
+if [ ! -e "$usb_driver/$usb_device" ]; then
+    echo "ReSpeaker USB port $usb_device is not present" >&2
+    exit 1
+fi
+
+printf '%s' "$usb_device" > "$usb_driver/unbind"
+sleep 2
+printf '%s' "$usb_device" > "$usb_driver/bind"

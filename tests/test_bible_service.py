@@ -38,6 +38,17 @@ class BibleReferenceTests(unittest.TestCase):
             BibleReference("PSA", "Psalms", 23),
         )
 
+    def test_plural_chapters_with_verse_range(self):
+        for command in (
+            "read acts chapters 3 verses 1 through 26",
+            "read Acts chapters three verses one through twenty six",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(
+                    parse_bible_reference(command),
+                    BibleReference("ACT", "Acts", 3, 1, 26),
+                )
+
     def test_non_reference_is_not_claimed(self):
         self.assertIsNone(parse_bible_reference("Who was the apostle John?"))
 

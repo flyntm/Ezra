@@ -9,6 +9,7 @@ from openai import OpenAI
 from config import *
 from network_status import internet_access_allowed
 from lesson_context import augment_question
+from operating_mode import presentation_context_enabled
 
 # Load environment variables
 load_dotenv(Path(__file__).parent / ".env", override=True)
@@ -42,6 +43,21 @@ be one of: neutral, happy, curious, thinking, confused, excited.
 conversation_history = []
 
 
+def _system_prompt():
+    """Include saved personal context even when conversation history is empty."""
+    name = PRIMARY_USER_NAME.strip()
+    if not name:
+        return SYSTEM_PROMPT
+    return SYSTEM_PROMPT + (
+        "\nSaved personal context: your primary user's name is "
+        f"{json.dumps(name, ensure_ascii=False)}. "
+        "Use this name when your primary user asks whether you remember their name. "
+        "Use it naturally and sparingly, not in every answer. "
+        "Other people may speak to you; respect their introductions and do not "
+        "assume every speaker or presentation audience member is your primary user.\n"
+    )
+
+
 def _get_openai_client():
     """Create the cloud client only when the cloud provider is used."""
 
@@ -64,7 +80,7 @@ def _ask_openai(messages):
 
     response = _get_openai_client().responses.create(
         model=OPENAI_MODEL,
-        input=[{"role": "system", "content": SYSTEM_PROMPT}] + messages,
+        input=[{"role": "system", "content": _system_prompt()}] + messages,
     )
     return getattr(response, "output_text", "").strip()
 
@@ -156,7 +172,7 @@ def _ask_openai_streaming(messages, on_sentence):
     try:
         with _get_openai_client().responses.stream(
             model=OPENAI_MODEL,
-            input=[{"role": "system", "content": SYSTEM_PROMPT}] + messages,
+            input=[{"role": "system", "content": _system_prompt()}] + messages,
         ) as stream:
             for event in stream:
                 if getattr(event, "type", "") != "response.output_text.delta":
@@ -210,7 +226,7 @@ def _ask_openai_streaming(messages, on_sentence):
 
 def _ask_local(messages):
     local_messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": _system_prompt()},
         *[dict(message) for message in messages],
     ]
 
@@ -283,7 +299,8 @@ def ask_ezra(user_text, on_sentence=None):
     # words in conversation memory, but give this request relevant lesson text,
     # PowerPoint notes, and Scripture with explicit source labels.
     request_messages = [dict(message) for message in conversation_history]
-    request_messages[-1]["content"] = augment_question(user_text)
+    if presentation_context_enabled():
+        request_messages[-1]["content"] = augment_question(user_text)
 
     provider = os.getenv("EZRA_AI_PROVIDER", AI_PROVIDER).strip().lower()
 

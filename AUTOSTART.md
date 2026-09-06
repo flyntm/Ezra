@@ -59,6 +59,11 @@ The service retries five seconds after an unexpected exit. A normal service
 stop sends `SIGTERM`, which Ezra handles through its existing robot cleanup
 path before exiting.
 
+The installer also grants Ezra permission to run one root-owned helper that
+resets only the ReSpeaker on USB port `1-2`. After repeated ReSpeaker control
+errors, Ezra rate-limits this reset to once per minute, waits for USB to
+re-enumerate, and reconnects automatically.
+
 The service also uses a 30-second health watchdog. Ezra withholds its heartbeat
 if microphone callbacks stop, command processing remains stuck for five
 minutes, or the presentation browser exits. Systemd then restarts Ezra, and an

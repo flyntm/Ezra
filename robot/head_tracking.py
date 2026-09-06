@@ -4,6 +4,8 @@ import math
 import threading
 import time
 
+import operating_mode
+
 from config import (
     HEAD_TRACKING_AVERAGE_SECONDS,
     HEAD_TRACKING_CENTER_DEADBAND_DEGREES,
@@ -178,9 +180,19 @@ class HeadTracker:
         announce=True,
         stop_event=None,
     ):
-        if self._center_hold:
+        # Keep listening still in presentation mode without blocking the
+        # audience movement used while Ezra speaks.
+        if (
+            source in {"speaker", "wake word", "command", "follow-up command"}
+            and operating_mode.get_mode() == operating_mode.PRESENTATION
+        ):
+            if announce:
+                print(f"👂 Head holding still in presentation mode ({source})")
             return False
-        announce = announce and VERBOSE_RUNTIME_LOGS
+        if self._center_hold:
+            if announce:
+                print(f"👂 Head holding still for centered gesture ({source})")
+            return False
         if abs(correction) <= HEAD_TRACKING_CENTER_DEADBAND_DEGREES:
             if announce:
                 print(
