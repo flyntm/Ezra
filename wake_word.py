@@ -401,6 +401,16 @@ def reset_idle_timer():
 def enter_sleep():
     print("\n😴 Ezra sleeping")
 
+    # Finish background face movement before setting the final sleep pose.
+    # Otherwise a standby gaze or blink can overwrite centered eyes/closed lids.
+    try:
+        robot_emotions.stop(
+            clear_mouth=True,
+            relax_servos=False,
+        )
+    except Exception as e:
+        print(f"Sleep animation-stop error: {e}")
+
     if head_tracker is not None:
         try:
             head_tracker.center()
@@ -413,11 +423,6 @@ def enter_sleep():
         robot_emotions.clear_external_gaze()
         eyes.center()
         eyelids.close_lids()
-
-        robot_emotions.stop(
-            clear_mouth=True,
-            relax_servos=False,
-        )
 
     except Exception as e:
         print(f"Sleep error: {e}")

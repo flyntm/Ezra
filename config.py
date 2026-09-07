@@ -558,9 +558,11 @@ CONTINUOUS_CAPTURE_AFTER_WAKE = True
 # Allow a natural pause after the wake word before treating the interaction as
 # wake-only and opening the separate follow-up listening turn.
 WAKE_COMMAND_TIMEOUT = 3.0
-WAKE_MAX_COMMAND_TIME = 10.0
+# Keep long questions intact; this is a safety cap, not a normal turn length.
+WAKE_MAX_COMMAND_TIME = 60.0
 WAKE_ACTIVE_RMS_THRESHOLD = 0.0055
-WAKE_END_SILENCE = 0.75
+# Allow a natural thinking/breathing pause before ending the question.
+WAKE_END_SILENCE = 1.50
 WAKE_END_POST_ROLL_SECONDS = 0.35
 SEED_ACTIVITY_WINDOW_SECONDS = 0.35
 
@@ -593,12 +595,13 @@ LISTEN_COMMAND_TIMEOUT = 5.0
 ENABLE_FOLLOW_UP_LISTENING = True
 # Seconds to wait for follow-up speech to begin.
 FOLLOW_UP_LISTEN_SECONDS = 5.0
-LISTEN_MAX_COMMAND_TIME = 10.0
+# Use the same question length and pause allowance with or without a wake word.
+LISTEN_MAX_COMMAND_TIME = WAKE_MAX_COMMAND_TIME
 
 LISTEN_PRE_ROLL_SECONDS = 0.75
 LISTEN_START_RMS_THRESHOLD = 0.008
 LISTEN_ACTIVE_RMS_THRESHOLD = 0.0055
-LISTEN_END_SILENCE = 0.95
+LISTEN_END_SILENCE = WAKE_END_SILENCE
 LISTEN_END_POST_ROLL_SECONDS = 0.60
 
 
