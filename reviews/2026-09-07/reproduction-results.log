@@ -1,0 +1,17 @@
+test_r01_questions_are_classified_as_shutdown_commands (__main__.ReviewProbes.test_r01_questions_are_classified_as_shutdown_commands) ... ok
+test_r02_wake_model_input_replays_and_scrambles_samples (__main__.ReviewProbes.test_r02_wake_model_input_replays_and_scrambles_samples) ... ok
+test_r03_keyboard_narration_runs_while_main_listener_is_active (__main__.ReviewProbes.test_r03_keyboard_narration_runs_while_main_listener_is_active) ... ok
+test_r04_active_narration_does_not_refresh_busy_watchdog (__main__.ReviewProbes.test_r04_active_narration_does_not_refresh_busy_watchdog) ... ok
+test_r05_online_start_then_offline_request_never_starts_local_server (__main__.ReviewProbes.test_r05_online_start_then_offline_request_never_starts_local_server) ... ok
+test_r06_error_cleanup_deletes_saved_presentation (__main__.ReviewProbes.test_r06_error_cleanup_deletes_saved_presentation) ... ok
+test_r07_normalization_corrupts_scripture_reference (__main__.ReviewProbes.test_r07_normalization_corrupts_scripture_reference) ... ok
+test_r08_current_lesson_file_is_excluded_from_retrieval (__main__.ReviewProbes.test_r08_current_lesson_file_is_excluded_from_retrieval) ... ok
+test_r09_brain_and_training_questions_are_routed_to_weather (__main__.ReviewProbes.test_r09_brain_and_training_questions_are_routed_to_weather) ... ok
+test_r10_reordered_pptx_still_uses_filename_order_and_note_numbers (__main__.ReviewProbes.test_r10_reordered_pptx_still_uses_filename_order_and_note_numbers) ... ok
+test_r11_synthesis_wait_cannot_observe_speech_cancellation (__main__.ReviewProbes.test_r11_synthesis_wait_cannot_observe_speech_cancellation) ... ok
+test_r13_remainder_playback_error_retries_already_spoken_answer (__main__.ReviewProbes.test_r13_remainder_playback_error_retries_already_spoken_answer) ... ok
+
+----------------------------------------------------------------------
+Ran 12 tests in 0.453s
+
+OK

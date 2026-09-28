@@ -4,7 +4,6 @@
 from pathlib import Path
 import textwrap
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 OUTPUT_PATH = PROJECT_ROOT / "EZRA_COMMANDS.md"
 
@@ -14,76 +13,91 @@ PRESENTATION_COMMANDS = (
     (
         "Tell us who you are / Tell everyone who you are",
         "Reads Ezra's introduction.",
-        "Yes", "",
+        "Yes",
+        "",
     ),
     (
-        "Where does your name come from? / Where did your name come from? / How did you get your name? / Tell me where your name comes from / Why are you named Ezra?",
+        "Where does your name come from? / Where did your name come from? / How did you get your name? / Tell me how you got your name / Tell me where your name comes from / Why are you named Ezra?",
         "Explains how Ezra got his name.",
-        "Yes", "",
+        "Yes",
+        "",
     ),
     (
         "Start the presentation / Begin the presentation / Open the presentation / Run the presentation / Present the Acts lesson",
         "Opens the Acts presentation at slide 1.",
-        "Yes", "",
+        "Yes",
+        "",
     ),
     (
         "Start the presentation on slide 5",
         "Opens the presentation at the requested slide.",
-        "Yes", "",
+        "Yes",
+        "",
     ),
     ("Next slide / Forward", "Moves to the next slide.", "Yes", "Right / Down"),
     ("Previous slide / Back", "Moves to the previous slide.", "No", "Left / Up"),
     (
-        "Go to slide 4 / Show us slide 4 of the presentation / Display slide 4 / Show the fourth slide",
+        "Go to slide 4 / On to slide 4 / Show us slide 4 of the presentation / Display slide 4 / Show the fourth slide",
         "Displays a numbered slide.",
-        "No*", "Number + Enter",
+        "No*",
+        "Number + Enter",
     ),
     (
         "Show question 2 / Go to question 2 / Display question 2",
         "Displays the requested question slide.",
-        "No*", "",
+        "No*",
+        "",
     ),
     (
         "Reveal the answer / Show the answers / Reveal the responses / Show the response",
         "Reveals the answer slide.",
-        "Yes", "",
+        "Yes",
+        "",
     ),
     (
         "Display the answers / Display the responses",
         "Reveals the answers without reading them.",
-        "No*", "",
+        "No*",
+        "",
     ),
     (
         "Tell us about this slide / Explain this slide",
         "Reads the script for the displayed slide.",
-        "Yes", "Enter",
+        "Yes",
+        "Enter",
     ),
     (
         "Stop the presentation / End the presentation / Close the presentation / Quit the presentation",
         "Closes the presentation.",
-        "No", "",
+        "No",
+        "",
     ),
     (
         "Rehearse the presentation / Preview the presentation / Test the presentation",
         "Prints a complete rehearsal without slides or speech.",
-        "No", "",
+        "No",
+        "",
     ),
     (
         "Tell us more",
         "Continues the previous sourced answer with the next relevant point.",
-        "Yes", "",
+        "Yes",
+        "",
     ),
     (
         "Give us your own broader explanation of ...",
         "Bypasses study-book and Scripture retrieval for a brief general explanation.",
-        "Yes", "",
+        "Yes",
+        "",
     ),
     (
         "Outside of Scripture, what ...?",
         "Requests Ezra's own broader, non-scriptural explanation.",
-        "Yes", "",
+        "Yes",
+        "",
     ),
-    ("—", "Skips the narration currently playing.", "No", "Space / Escape"),
+    ("—", "Skips the narration currently playing.", "No", "Escape"),
+    ("—", "Pauses or resumes the narration currently playing.", "No", "Space"),
 )
 
 BIBLE_COMMANDS = (
@@ -96,10 +110,18 @@ BIBLE_COMMANDS = (
 
 OTHER_COMMANDS = (
     (
+        "Go to sleep",
+        "Centers the head and closes the eyes. Say Ezra or Hey Ezra to wake him.",
+    ),
+    (
         "Say good night to everyone",
         "Wishes the audience good night with a closing joke and a smile.",
     ),
     ("What time is it?", "Speaks the current local time."),
+    (
+        "Look over here / Look here / Look at me / Face me",
+        "Turns toward the speaker, including in Presentation mode. Uses the current command's qualified microphone direction; asks you to repeat if unavailable.",
+    ),
     ("Set volume to 1–10", "Sets speaker volume from 10% to 100%."),
     ("What's the weather?", "Reports weather for the configured location."),
     ("What's the weather in Dallas?", "Reports weather for a named location."),
@@ -126,6 +148,33 @@ OTHER_COMMANDS = (
     ),
 )
 
+KEYBOARD_SHORTCUTS = (
+    ("Right / Down", "Advance one slide."),
+    ("Left / Up", "Go back one slide."),
+    ("Digits, then Enter", "Jump to that slide number."),
+    ("Enter", "Read the current slide when no number is pending."),
+    ("Backspace", "Remove the last pending slide-number digit."),
+    ("Space", "Pause or resume current narration."),
+    ("Escape", "Skip current narration and clear pending digits."),
+    (
+        "W",
+        "Toggle wake listening; ReSpeaker ring shows DoA when on, three blue LEDs at the confirmed wake bearing, and off when disabled.",
+    ),
+    (
+        "Ctrl+Alt+R (Pi desktop)",
+        "Clear a failed state and restart Ezra normally.",
+    ),
+    (
+        "Ctrl+Alt+P (Pi desktop)",
+        "Restart Ezra while preserving the active presentation for restore.",
+    ),
+    ("Ctrl+Alt+T (Pi desktop)", "Open a terminal."),
+    (
+        "Ctrl+C (terminal)",
+        "Exit Ezra if launched directly; otherwise stop the journal viewer.",
+    ),
+)
+
 
 def _table(headers, rows):
     """Render stable-width columns with alternatives on continuation rows."""
@@ -136,10 +185,13 @@ def _table(headers, rows):
     }[len(headers)]
 
     def formatted_row(values):
-        return "| " + " | ".join(
-            str(value).ljust(widths[index])
-            for index, value in enumerate(values)
-        ) + " |"
+        return (
+            "| "
+            + " | ".join(
+                str(value).ljust(widths[index]) for index, value in enumerate(values)
+            )
+            + " |"
+        )
 
     lines = [
         formatted_row(headers),
@@ -198,6 +250,45 @@ and explain.”** These variations are not listed separately.
 If a valid presentation command is given before the presentation is running,
 Ezra starts the presentation silently and immediately performs that command.
 
+## Narration script commands
+
+Put these markers in PowerPoint speaker notes or narration text. Ezra follows
+them as instructions; the marker names are not spoken aloud.
+
+| Script command | What it does | Example |
+| --- | --- | --- |
+| `[Pause]` | Pauses after the preceding text (currently 1.5 seconds). | `Consider this. [Pause] What do you notice?` |
+| `[Emph]...[/Emph]` | Emphasizes the enclosed words with slower delivery and boundary pauses. | `This is [Emph]very important[/Emph].` |
+| `[Humor]...[/Humor]` | Adds a short lead-in pause and humorous timing, stressing the final phrase. | `[Humor]I checked twice, just to be sure.[/Humor]` |
+| `[HumorPause]` | Adds a short pause after the preceding text (currently 0.6 seconds); also inserted automatically before `[Humor]`. | `Wait for it. [HumorPause] Here it is.` |
+| `[Smile]` | Pauses for a smile and slow wink (currently 2 seconds). | `It is good to see you. [Smile] Let us begin.` |
+| `[Read Book Chapter:Start-End]` | Reads and displays the Bible passage, then returns to the slide and continues narration. | `[Read Acts 3:1-20]` |
+| `[NEXT SLIDE]` | In PowerPoint notes, advances to the next slide after the current slide's full narration finishes. | `That completes this point. [NEXT SLIDE]` |
+
+Use opening and closing tags for `[Emph]` and `[Humor]`. Keep each pair within
+one passage of prose, without nesting other script commands inside it.
+All narration script commands are case-insensitive, including `[NEXT SLIDE]`:
+`[next slide]`, `[Next Slide]`, and `[NEXT SLIDE]` work identically. Slide
+advancement takes effect at the end of the slide's narration regardless of
+where the marker appears in the notes.
+Pause durations and delivery settings are configured in `config.py`.
+
+In PowerPoint speaker notes or narration text, use **`[Read Book Chapter:Start-End]`**
+to read a Bible passage at that point, then continue the script. For example:
+
+`Let us read the passage. [Read Acts 3:1-20] Now consider Peter's response.`
+
+**`[Read Acts 3:1:20.]`** also reads Acts 3, verses 1–20.
+For a single verse, use **`[Read John 3:16]`**. Commands are case-insensitive.
+The reading uses the existing Bible source settings (NIV when available, WEB
+fallback). With Bible display enabled, the passage appears during its reading;
+after reading finishes, it remains visible for 5 seconds before the original
+slide reappears and narration continues. The passage also closes if narration
+is stopped. The existing local reading limit (`BIBLE_MAX_SPOKEN_VERSES`, currently
+30) still applies. Space pauses/resumes the reading; Escape skips the remaining
+narration. An invalid reference produces a brief spoken error, then narration
+continues.
+
 ## Bible commands
 
 {_table(("Command", "What it does"), BIBLE_COMMANDS)}
@@ -209,20 +300,18 @@ when offline. A Bible passage can also be displayed while Ezra reads it.
 
 {_table(("Command", "What it does"), OTHER_COMMANDS)}
 
-## Pi terminal presentation controls
+## Keyboard shortcuts
 
-Pi desktop recovery shortcuts work globally without opening a terminal:
+{_table(("Shortcut", "What it does"), KEYBOARD_SHORTCUTS)}
 
-| Shortcut     | What it does                                                   |
-| ------------ | -------------------------------------------------------------- |
-| Ctrl+Alt+R   | Clears a failed state and performs a normal Ezra restart.      |
-| Ctrl+Alt+P   | Restarts after preserving the active presentation for restore. |
+Slide-number digits are buffered for up to five seconds; press Enter to commit
+the jump. Pressing Enter with no number pending reads the current slide. These
+are keyboard controls, not spoken commands.
 
-If Ezra becomes unresponsive during a presentation, press **Ctrl+Alt+T** on
-the Pi keyboard to open a terminal. These are terminal shortcuts, not spoken
-commands:
+After opening a terminal with **Ctrl+Alt+T**, these shell commands control the
+service:
 
-| Shortcut       | What it does                                      |
+| Command        | What it does                                      |
 | -------------- | ------------------------------------------------- |
 | `ezra-stop`    | Stops Ezra and leaves it stopped.                  |
 | `ezra-start`   | Starts Ezra after an intentional stop.             |
@@ -230,9 +319,7 @@ commands:
 | `ezra-reboot`  | Reboots the entire Pi; it may request the password. |
 
 After `ezra-reboot`, Ezra should start automatically when the Pi returns to
-its desktop session. **Ctrl+C** only stops Ezra when it was launched directly
-from that same terminal. If the terminal is following Ezra's system log,
-**Ctrl+C** stops only the log viewer.
+its desktop session.
 
 ## Notes
 

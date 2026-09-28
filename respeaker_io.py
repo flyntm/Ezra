@@ -2,6 +2,7 @@ import subprocess
 import sys
 import threading
 import time
+import math
 
 import usb.core
 
@@ -10,6 +11,13 @@ RESPEAKER_PYTHON_CONTROL_PATH = (
 )
 RESPEAKER_VENDOR_ID = 0x2886
 RESPEAKER_RECOGNITION_CHANNEL = 0
+RESPEAKER_LED_EFFECT_OFF = 0
+RESPEAKER_LED_EFFECT_DOA = 4
+RESPEAKER_LED_EFFECT_RING = 5
+RESPEAKER_RING_LED_COUNT = 12
+RESPEAKER_FRONT_LED_INDEX = 0
+RESPEAKER_RING_INDEX_DIRECTION = 1
+RESPEAKER_WAKE_LED_COLOR = 0x0000FF
 RESPEAKER_RESET_COMMAND = ("sudo", "-n", "/usr/local/sbin/ezra-reset-respeaker")
 RESPEAKER_RESET_COOLDOWN_SECONDS = 60.0
 
@@ -19,13 +27,30 @@ _last_reset_at = float("-inf")
 
 def select_respeaker_recognition_channel(audio):
     """Return the model-calibrated channel while preserving a mono column."""
-    if (
-        getattr(audio, "ndim", 0) < 2
-        or audio.shape[1] <= RESPEAKER_RECOGNITION_CHANNEL
-    ):
+    if getattr(audio, "ndim", 0) < 2 or audio.shape[1] <= RESPEAKER_RECOGNITION_CHANNEL:
         return audio.copy()
     channel = RESPEAKER_RECOGNITION_CHANNEL
     return audio[:, channel : channel + 1].copy()
+
+
+def set_respeaker_listening_led(mic, enabled):
+    """Show direction of arrival while listening; turn the ring off otherwise."""
+    effect = RESPEAKER_LED_EFFECT_DOA if enabled else RESPEAKER_LED_EFFECT_OFF
+    mic.write("LED_EFFECT", [effect])
+
+
+def set_respeaker_wake_indicator(mic, bearing_degrees):
+    """Show three blue LEDs centered on the signed wake bearing."""
+    sector = math.floor((float(bearing_degrees) + 15.0) / 30.0)
+    center = (
+        RESPEAKER_FRONT_LED_INDEX + RESPEAKER_RING_INDEX_DIRECTION * sector
+    ) % RESPEAKER_RING_LED_COUNT
+    colors = [0] * RESPEAKER_RING_LED_COUNT
+    colors[(center - 1) % RESPEAKER_RING_LED_COUNT] = RESPEAKER_WAKE_LED_COLOR
+    colors[center] = RESPEAKER_WAKE_LED_COLOR
+    colors[(center + 1) % RESPEAKER_RING_LED_COUNT] = RESPEAKER_WAKE_LED_COLOR
+    mic.write("LED_RING_COLOR", colors)
+    mic.write("LED_EFFECT", [RESPEAKER_LED_EFFECT_RING])
 
 
 def reset_respeaker_usb():

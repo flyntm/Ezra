@@ -69,9 +69,18 @@ def _score(question, text):
     return len(overlap)
 
 
+def _material_paths(directory):
+    # Lesson exports may use either suffix for line-delimited JSON records.
+    directory = Path(directory)
+    if not directory.is_dir():
+        return []
+    return sorted(path for path in directory.iterdir()
+                  if path.is_file() and path.suffix.lower() in {".jsonl", ".json"})
+
+
 def _jsonl_chunks(directory):
     chunks = []
-    for path in sorted(Path(directory).glob("*.jsonl")):
+    for path in _material_paths(directory):
         try:
             lines = path.read_text(encoding="utf-8-sig").splitlines()
         except OSError as exc:
@@ -112,7 +121,7 @@ def _lesson_material(directory):
     """Cache parsed files, while noticing additions and edits automatically."""
     global _material_cache, _material_signature
     directory = Path(directory)
-    paths = sorted(directory.glob("*.jsonl"))
+    paths = _material_paths(directory)
     signature = tuple(
         (path, path.stat().st_mtime_ns, path.stat().st_size) for path in paths
     )

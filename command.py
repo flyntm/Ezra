@@ -8,9 +8,22 @@ import time
 import state
 import operating_mode
 
-from bible_display import close_bible_display, show_bible_passage, split_passage_response
+from bible_display import (
+    close_bible_display,
+    scroll_active_bible_display,
+    show_bible_passage,
+    split_passage_response,
+)
 from bible_service import get_bible_response
-from command_phrases import GOOD_NIGHT_RESPONSE, looks_like_good_night_command
+from command_phrases import (
+    GOOD_NIGHT_RESPONSE,
+    looks_like_good_night_command,
+    looks_like_poweroff_command,
+    looks_like_quit_command,
+    looks_like_look_here_command,
+    looks_like_sleep_command,
+)
+from command_normalization import is_cancel_command
 from config import ENABLE_BIBLE_DISPLAY, GOODBYE_TEXT, SHUTDOWN_SLEEP_SETTLE_SECONDS
 from live_info import get_live_info_response
 from network_status import internet_access_allowed
@@ -60,11 +73,6 @@ VOLUME_WORDS = {
 
 VOLUME_WORD_PATTERN = r"\b(?:volume|volumes|value|vol|aim|bomb)\b"
 VOLUME_FILLER_WORDS = {"to", "at", "on", "of", "the", "a"}
-POWEROFF_PATTERN = r"\b(?:shutdown|shut down|power off|poweroff)\b"
-QUIT_PROGRAM_PATTERN = (
-    r"\b(?:quit|exit)(?:\s+program(?:ming)?)?\b"
-    r"|\bstop\s+program(?:ming)?\b"
-)
 
 
 def parse_volume_level(command):
@@ -138,18 +146,6 @@ def looks_like_volume_command(command):
     return False
 
 
-def looks_like_poweroff_command(command):
-    """Return True for shutdown intent phrasing."""
-
-    return bool(re.search(POWEROFF_PATTERN, command.lower()))
-
-
-def looks_like_quit_command(command):
-    """Return True for app-exit intent phrasing."""
-
-    return bool(re.search(QUIT_PROGRAM_PATTERN, command.lower()))
-
-
 def request_system_poweroff():
     """Attempt system poweroff without blocking on a sudo password prompt."""
 
@@ -178,6 +174,28 @@ def handle_local_command(command):
 
     text_lower = command.lower()
 
+    if is_cancel_command(text_lower):
+        reset_idle_timer()
+        return True
+
+    if looks_like_sleep_command(command):
+        speak("Going to sleep.")
+        enter_sleep()
+        return True
+
+    if looks_like_look_here_command(command):
+        from config import ENABLE_HEAD_TRACKING, ENABLE_INTERACTION_DIAGNOSTIC
+
+        if not ENABLE_HEAD_TRACKING or ENABLE_INTERACTION_DIAGNOSTIC:
+            speak("Head tracking is disabled.")
+        else:
+            from robot.head_tracking import head_tracker
+
+            if not head_tracker.face_command_speaker():
+                speak("I couldn't turn toward you. Please say look over here again.")
+        reset_idle_timer()
+        return True
+
     if operating_mode.status_requested(command):
         current_mode = operating_mode.get_mode()
         speak(f"I'm in {current_mode.title()} mode.")
@@ -188,6 +206,14 @@ def handle_local_command(command):
     if requested_mode is not None:
         operating_mode.set_mode(requested_mode)
         speak(f"{requested_mode.title()} mode.")
+        reset_idle_timer()
+        return True
+
+    scroll_match = re.search(
+        r"\b(?:scroll|roll|show)\s+(up|down)\b",
+        text_lower,
+    )
+    if scroll_match and scroll_active_bible_display(scroll_match.group(1)):
         reset_idle_timer()
         return True
 
@@ -212,6 +238,7 @@ def handle_local_command(command):
 
     if looks_like_quit_command(command):
         speak(GOODBYE_TEXT)
+        state.exit_requested = True
         state.shutting_down = True
         return True
 
@@ -298,8 +325,26 @@ def handle_local_command(command):
 
     bible_response = get_bible_response(command)
     if bible_response:
-        bible_display = None
+        display_request = re.search(
+            r"\b(?:show|display(?:ing)?|just playing)\b", text_lower
+        )
         display_content = split_passage_response(bible_response)
+        if display_request:
+            if not ENABLE_BIBLE_DISPLAY:
+                speak("Bible passage display is disabled.")
+            elif display_content is None:
+                speak(bible_response)
+            else:
+                try:
+                    show_bible_passage(*display_content, read_along=False)
+                    speak(f"Displaying {display_content[0]}.")
+                except (OSError, RuntimeError) as exc:
+                    print(f"⚠️ Bible display unavailable: {exc}")
+                    speak("I couldn't display that Bible passage.")
+            reset_idle_timer()
+            return True
+
+        bible_display = None
         if ENABLE_BIBLE_DISPLAY and display_content is not None:
             try:
                 bible_display = show_bible_passage(*display_content)
@@ -312,6 +357,9 @@ def handle_local_command(command):
             ),
             on_playback_complete=(
                 bible_display.finish_reading if bible_display is not None else None
+            ),
+            on_playback_end=(
+                bible_display.stop_reading if bible_display is not None else None
             ),
         )
         reset_idle_timer()

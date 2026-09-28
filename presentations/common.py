@@ -8,12 +8,11 @@ from .presenter import smile_and_pause, speak_with_head_motion
 
 INTRODUCTION_OPENING = (
     "Hi, everyone! I'm Ezra, an A.I. entity and co-presenter. "
-    "I'm powered by a Raspberry Pi with 8 gigabytes of memory and a "
-    "128-gigabyte S.D. card for storage. I connect to the internet through "
-    "Wi-Fi, and the software that brings me to life is written in Python with "
-    "more than 10,000 lines of code. I can listen, think, speak, show emotion, and"
+    "I'm powered by a Raspberry Pi computer and I connect to the internet through "
+    "Wi-Fi. The software that brings me to life is written in Python with "
+    "more than 10,000 lines of code. I can listen, think, speak, show emotion, and "
     "answer with HOPEFULLY useful responses. And it all fits inside "
-    "this compact system which, let's be honest, looks very GOOFY!"
+    "this compact system which, let's be honest, looks PRETY DARN GOOFY!"
 )
 
 INTRODUCTION_WARNING = (
@@ -36,12 +35,12 @@ NAME_ORIGIN_OPENING = (
 )
 
 NAME_ORIGIN_EXPLANATION = (
-    "Since I was built to assist with presentations and make information "
+    "Since I was built to help with presentations and make information "
     "easier to understand, Ezra seemed like the perfect name for me."
 )
 
 NAME_ORIGIN_CLOSING = (
-    "The original Ezra used scrolls, and I use a Raspberry Pi—but otherwise, "
+    "The original Ezra used scrolls, and I use a computer chip, but otherwise, "
     "the resemblance is uncanny!"
 )
 
@@ -63,6 +62,8 @@ _INTRODUCTION_REQUEST = re.compile(
 _NAME_ORIGIN_REQUEST = re.compile(
     r"\b(?:"
     r"(?:tell (?:us|me|everyone) )?where (?:did |does )?your name come(?:s)? from"
+    r"|tell (?:us|me|everyone) how(?:\s+did|['’]?d) you get your name"
+    r"|tell (?:us|me|everyone) how you got your name"
     r"|how(?:\s+did|['’]?d) you get your name"
     r"|why (?:are|were) you named ezra"
     r")\b",

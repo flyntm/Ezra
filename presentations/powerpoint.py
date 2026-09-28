@@ -5,19 +5,56 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import re
+import posixpath
 import xml.etree.ElementTree as ET
 import zipfile
 
 
 _DRAWING_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 _PRESENTATION_NS = "http://schemas.openxmlformats.org/presentationml/2006/main"
-_SLIDE_RE = re.compile(r"^ppt/slides/slide(\d+)\.xml$")
-_NEXT_SLIDE_MARKERS = ("[NEXT SLIDE]", "[Next Slide]")
+_RELATIONSHIP_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+_NEXT_SLIDE_MARKER = re.compile(r"\[next slide\]", re.IGNORECASE)
 _QUESTION_LABEL = re.compile(r"\bQ\s*(\d+)\b", re.IGNORECASE)
 
 
 class PresentationError(RuntimeError):
     """Raised when a presentation cannot be opened or controlled."""
+
+
+def part_relationships(package, part):
+    directory, name = posixpath.split(part)
+    path = posixpath.join(directory, "_rels", name + ".rels")
+    try:
+        root = ET.fromstring(package.read(path))
+    except KeyError:
+        return {}
+    relationships = {}
+    for node in root:
+        if node.get("TargetMode") == "External":
+            continue
+        target = node.get("Target", "")
+        target = posixpath.normpath(target.lstrip("/") if target.startswith("/")
+                                   else posixpath.join(directory, target))
+        if target.startswith("../"):
+            raise PresentationError("Invalid PowerPoint relationship target")
+        relationships[node.get("Id")] = (node.get("Type", ""), target)
+    return relationships
+
+
+def ordered_slide_parts(package):
+    """Read the presentation's logical order, independent of part filenames."""
+    try:
+        root = ET.fromstring(package.read("ppt/presentation.xml"))
+        relationships = part_relationships(package, "ppt/presentation.xml")
+        parts = []
+        for node in root.findall(f"{{{_PRESENTATION_NS}}}sldIdLst/{{{_PRESENTATION_NS}}}sldId"):
+            kind, target = relationships[node.attrib[f"{{{_RELATIONSHIP_NS}}}id"]]
+            if not kind.endswith("/slide"):
+                raise PresentationError("Invalid slide relationship")
+            parts.append(target)
+        return parts
+    except KeyError as exc:
+        raise PresentationError("PowerPoint slide relationships are missing") from exc
 
 
 @dataclass(frozen=True)
@@ -42,25 +79,21 @@ class PowerPointDeck:
 
         try:
             with zipfile.ZipFile(deck_path) as package:
-                slide_numbers = sorted(
-                    int(match.group(1))
-                    for name in package.namelist()
-                    if (match := _SLIDE_RE.match(name))
-                )
+                slide_parts = ordered_slide_parts(package)
                 parsed_notes = tuple(
-                    _read_note(package, number) for number in slide_numbers
+                    _read_note(package, part) for part in slide_parts
                 )
                 notes = tuple(note for note, _ in parsed_notes)
                 auto_advance = tuple(requested for _, requested in parsed_notes)
                 reveal_slides = tuple(
-                    _has_reveal_content(package, number)
-                    for number in slide_numbers
+                    _has_reveal_content(package, part)
+                    for part in slide_parts
                 )
                 question_numbers = tuple(
-                    _read_question_number(package, number)
-                    for number in slide_numbers
+                    _read_question_number(package, part)
+                    for part in slide_parts
                 )
-        except (zipfile.BadZipFile, ET.ParseError) as exc:
+        except (zipfile.BadZipFile, ET.ParseError, KeyError) as exc:
             raise PresentationError(
                 f"Invalid PowerPoint file: {deck_path}"
             ) from exc
@@ -76,12 +109,12 @@ class PowerPointDeck:
         )
 
 
-def _read_note(package, slide_number):
-    name = f"ppt/notesSlides/notesSlide{slide_number}.xml"
-    try:
-        root = ET.fromstring(package.read(name))
-    except KeyError:
+def _read_note(package, slide_part):
+    name = next((target for kind, target in part_relationships(package, slide_part).values()
+                 if kind.endswith("/notesSlide")), None)
+    if name is None:
         return "", False
+    root = ET.fromstring(package.read(name))
 
     paragraphs = []
     auto_advance = False
@@ -96,10 +129,9 @@ def _read_note(package, slide_number):
         sources_found = sources_position >= 0
         if sources_found:
             text = text[:sources_position].strip()
-        for marker in _NEXT_SLIDE_MARKERS:
-            if marker in text:
-                auto_advance = True
-                text = text.replace(marker, "")
+        text, marker_count = _NEXT_SLIDE_MARKER.subn("", text)
+        if marker_count:
+            auto_advance = True
         text = text.strip()
         if text:
             paragraphs.append(text)
@@ -108,16 +140,16 @@ def _read_note(package, slide_number):
     return "\n".join(paragraphs), auto_advance
 
 
-def _has_reveal_content(package, slide_number):
-    root = ET.fromstring(package.read(f"ppt/slides/slide{slide_number}.xml"))
+def _has_reveal_content(package, slide_part):
+    root = ET.fromstring(package.read(slide_part))
     for identity in root.iter(f"{{{_PRESENTATION_NS}}}cNvPr"):
         if identity.get("name", "").startswith("answer-"):
             return True
     return False
 
 
-def _read_question_number(package, slide_number):
-    root = ET.fromstring(package.read(f"ppt/slides/slide{slide_number}.xml"))
+def _read_question_number(package, slide_part):
+    root = ET.fromstring(package.read(slide_part))
     visible_text = " ".join(
         node.text or "" for node in root.iter(f"{{{_DRAWING_NS}}}t")
     )

@@ -4,6 +4,7 @@ import time
 from collections import deque
 
 import numpy as np
+import presentation_controls
 import sounddevice as sd
 
 from config import (
@@ -150,6 +151,13 @@ def listen(wake_audio=None, wake_text="EZRA", *, command_timeout=COMMAND_TIMEOUT
     global _last_command_doa
     _last_command_doa = None
 
+    from config import ENABLE_HEAD_TRACKING, ENABLE_INTERACTION_DIAGNOSTIC
+    command_head_tracker = None
+    if ENABLE_HEAD_TRACKING and not ENABLE_INTERACTION_DIAGNOSTIC:
+        from robot.head_tracking import head_tracker
+        command_head_tracker = head_tracker
+        command_head_tracker.remember_command_bearing(None)
+
     from robot import robot_emotions
 
     print("👂 Listening for command (ReSpeaker VAD)...")
@@ -217,6 +225,8 @@ def listen(wake_audio=None, wake_text="EZRA", *, command_timeout=COMMAND_TIMEOUT
         blocksize=BLOCKSIZE,
     ):
         while True:
+            if presentation_controls.pending():
+                return None
             # Collect available audio frames.
             while not audio_queue.empty():
                 chunk = audio_queue.get()
@@ -355,5 +365,7 @@ def listen(wake_audio=None, wake_text="EZRA", *, command_timeout=COMMAND_TIMEOUT
         print(f"Recording RMS: {rms:.6f}")
 
     _last_command_doa = _qualified_command_doa(command_doa_samples)
+    if command_head_tracker is not None:
+        command_head_tracker.remember_command_bearing(_last_command_doa)
 
     return audio

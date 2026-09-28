@@ -24,7 +24,6 @@ from config import (
     WEB_BIBLE_DATABASE,
 )
 
-
 load_dotenv(Path(__file__).parent / ".env", override=False)
 
 
@@ -43,8 +42,7 @@ class BibleReference:
         if self.verse_end is None or self.verse_end == self.verse_start:
             return f"{self.book_name} {self.chapter}:{self.verse_start}"
         return (
-            f"{self.book_name} {self.chapter}:"
-            f"{self.verse_start}-{self.verse_end}"
+            f"{self.book_name} {self.chapter}:" f"{self.verse_start}-{self.verse_end}"
         )
 
     @property
@@ -97,7 +95,7 @@ _BOOKS = (
     ("NEH", "Nehemiah", ()),
     ("EST", "Esther", ()),
     ("JOB", "Job", ()),
-    ("PSA", "Psalms", ("psalm",)),
+    ("PSA", "Psalms", ("psalm", "songs")),
     ("PRO", "Proverbs", ()),
     ("ECC", "Ecclesiastes", ()),
     ("SNG", "Song of Solomon", ("song of songs",)),
@@ -148,14 +146,37 @@ _BOOKS = (
 )
 
 _NUMBER_WORDS = {
-    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
-    "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
-    "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
-    "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
-    "nineteen": 19, "twenty": 20, "thirty": 30, "forty": 40,
-    "fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80,
-    "ninety": 90, "hundred": 100, "one hundred": 100,
-    "one hundred nineteen": 119, "one hundred fifty": 150,
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+    "thirteen": 13,
+    "fourteen": 14,
+    "fifteen": 15,
+    "sixteen": 16,
+    "seventeen": 17,
+    "eighteen": 18,
+    "nineteen": 19,
+    "twenty": 20,
+    "thirty": 30,
+    "forty": 40,
+    "fifty": 50,
+    "sixty": 60,
+    "seventy": 70,
+    "eighty": 80,
+    "ninety": 90,
+    "hundred": 100,
+    "one hundred": 100,
+    "one hundred nineteen": 119,
+    "one hundred fifty": 150,
 }
 
 
@@ -189,12 +210,38 @@ def _book_aliases():
 
 _ALIASES = _book_aliases()
 _NUMBER_PATTERN = r"(?:\d{1,3}|[a-z]+(?:[\s-]+[a-z]+){0,2})"
+_ORDINAL_BOOK_NAMES = "|".join(
+    re.escape(name[2:].lower())
+    for _book_id, name, _extra_aliases in _BOOKS
+    if name[0].isdigit()
+)
+_ORDINAL_BOOK_PATTERN = re.compile(
+    rf"\b(?P<ordinal>1st|2nd|3rd)(?=\s+(?:{_ORDINAL_BOOK_NAMES})\b)",
+    re.IGNORECASE,
+)
+_ORDINAL_BOOK_WORDS = {"1st": "first", "2nd": "second", "3rd": "third"}
+
+
+def _normalize_numbered_book_ordinals(text):
+    return _ORDINAL_BOOK_PATTERN.sub(
+        lambda match: _ORDINAL_BOOK_WORDS[match.group("ordinal").lower()],
+        str(text),
+    )
+
+
+def _normalize_asr_verse_range(text):
+    return re.sub(
+        r"(\bverses?\s+\d{1,3})\s*-\s*3\s*-\s*(\d{1,3})\b",
+        r"\1 through \2",
+        str(text),
+        flags=re.IGNORECASE,
+    )
 
 
 def _consume_number(text):
     digit_match = re.match(r"^(\d{1,3})\b", text)
     if digit_match:
-        return int(digit_match.group(1)), text[digit_match.end():].strip()
+        return int(digit_match.group(1)), text[digit_match.end() :].strip()
 
     words = text.split()
     for size in range(min(3, len(words)), 0, -1):
@@ -207,7 +254,11 @@ def _consume_number(text):
 def parse_bible_reference(command):
     """Return an explicit Bible reference found in a spoken command."""
 
-    normalized = re.sub(r"[,.?]", " ", command.lower())
+    normalized = re.sub(
+        r"[,.?]",
+        " ",
+        _normalize_asr_verse_range(_normalize_numbered_book_ordinals(command)).lower(),
+    )
     normalized = re.sub(r"\s+", " ", normalized).strip()
 
     for alias, book_id, book_name in _ALIASES:
@@ -215,7 +266,7 @@ def parse_bible_reference(command):
         if not match:
             continue
 
-        remainder = normalized[match.end():].strip()
+        remainder = normalized[match.end() :].strip()
         remainder = re.sub(r"^chapters?\s+", "", remainder)
         chapter, tail = _consume_number(remainder)
         if chapter is None or chapter < 1:
@@ -368,10 +419,7 @@ class BibleService:
         if not self.database_path.exists():
             raise RuntimeError("Local World English Bible database is missing")
         end = reference.verse_end or reference.verse_start
-        query = (
-            "SELECT verse, text FROM verses "
-            "WHERE book_id = ? AND chapter = ?"
-        )
+        query = "SELECT verse, text FROM verses " "WHERE book_id = ? AND chapter = ?"
         parameters = [reference.book_id, reference.chapter]
         if reference.verse_start is not None:
             query += " AND verse BETWEEN ? AND ?"
@@ -417,13 +465,19 @@ def get_bible_response(command, service=None):
     if not ENABLE_BIBLE_PASSAGES:
         return None
 
-    normalized = re.sub(r"\s+", " ", command.lower()).strip()
+    normalized = re.sub(
+        r"\s+", " ", _normalize_numbered_book_ordinals(command).lower()
+    ).strip()
     mentions_unnumbered_peter = (
         re.search(r"\bpeter\b", normalized) is not None
         and re.search(r"\b(?:1|2|first|second)\s+peter\b", normalized) is None
     )
     looks_like_passage_request = (
-        re.search(r"\b(?:read|chapters?|verses?)\b", normalized) is not None
+        re.search(
+            r"\b(?:read|show|display|chapters?|verses?)\b",
+            normalized,
+        )
+        is not None
     )
     if mentions_unnumbered_peter and looks_like_passage_request:
         return "Do you mean First Peter or Second Peter?"
@@ -431,7 +485,7 @@ def get_bible_response(command, service=None):
     reference = parse_bible_reference(command)
     bookless_passage_request = (
         reference is None
-        and re.search(r"\b(?:read|repeat)\b", normalized) is not None
+        and re.search(r"\b(?:read|repeat|show|display)\b", normalized) is not None
         and re.search(r"\b(?:chapters?|verses?)\b", normalized) is not None
     )
     if bookless_passage_request and _last_reference is not None:
@@ -444,6 +498,8 @@ def get_bible_response(command, service=None):
         )
         reference = parse_bible_reference(contextual_command)
     elif bookless_passage_request:
+        if re.search(r"\b(?:show|display)\b", normalized):
+            return "Which book of the Bible would you like me to display?"
         return "Which book of the Bible would you like me to read?"
 
     if reference is None:

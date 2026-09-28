@@ -73,6 +73,12 @@ class ServiceWatchdog:
         with self._lock:
             self._health_checks[name] = check
 
+    def progress(self):
+        """Renew busy work only when a caller observes actual progress."""
+        with self._lock:
+            if self._phase == "busy":
+                self._deadline = self._clock() + DEFAULT_BUSY_TIMEOUT_SECONDS
+
     def remove_health_check(self, name):
         with self._lock:
             self._health_checks.pop(name, None)

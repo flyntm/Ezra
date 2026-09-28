@@ -32,10 +32,26 @@ class BibleReferenceTests(unittest.TestCase):
             BibleReference("1CO", "1 Corinthians", 13, 4, 7),
         )
 
+    def test_numeric_ordinal_book_name(self):
+        self.assertEqual(
+            parse_bible_reference("displaying 1st Peter chapter 1"),
+            BibleReference("1PE", "1 Peter", 1),
+        )
+
     def test_chapter_reference(self):
         self.assertEqual(
             parse_bible_reference("Psalm twenty three"),
             BibleReference("PSA", "Psalms", 23),
+        )
+
+    def test_songs_asr_alias_resolves_to_psalms_without_shadowing_song_of_songs(self):
+        self.assertEqual(
+            parse_bible_reference("read songs 23"),
+            BibleReference("PSA", "Psalms", 23),
+        )
+        self.assertEqual(
+            parse_bible_reference("read Song of Songs chapter 1"),
+            BibleReference("SNG", "Song of Solomon", 1),
         )
 
     def test_plural_chapters_with_verse_range(self):
@@ -49,6 +65,12 @@ class BibleReferenceTests(unittest.TestCase):
                     BibleReference("ACT", "Acts", 3, 1, 26),
                 )
 
+    def test_asr_through_mishearing_preserves_verse_range(self):
+        self.assertEqual(
+            parse_bible_reference("just playing Acts chapter 8 verses 4-3-40"),
+            BibleReference("ACT", "Acts", 8, 4, 40),
+        )
+
     def test_non_reference_is_not_claimed(self):
         self.assertIsNone(parse_bible_reference("Who was the apostle John?"))
 
@@ -60,14 +82,37 @@ class BibleReferenceTests(unittest.TestCase):
         self.assertEqual(response, "Do you mean First Peter or Second Peter?")
 
     @patch("bible_service._last_reference", None)
-    def test_bookless_follow_up_asks_which_book(self):
-        response = get_bible_response(
-            "can you repeat chapter 2 verses 1 through 10"
+    def test_numeric_ordinal_peter_request_is_not_ambiguous(self):
+        service = Mock()
+        service.get_passage.return_value = (
+            BiblePassage("1 Peter 1", "Passage text.", "NIV", "NIV", True),
+            None,
         )
+
+        response = get_bible_response(
+            "displaying 1st Peter chapter 1",
+            service=service,
+        )
+
+        self.assertTrue(response.startswith("1 Peter 1, from the NIV."))
+        service.get_passage.assert_called_once_with(BibleReference("1PE", "1 Peter", 1))
+
+    @patch("bible_service._last_reference", None)
+    def test_bookless_follow_up_asks_which_book(self):
+        response = get_bible_response("can you repeat chapter 2 verses 1 through 10")
 
         self.assertEqual(
             response,
             "Which book of the Bible would you like me to read?",
+        )
+
+    @patch("bible_service._last_reference", None)
+    def test_bookless_display_request_asks_which_book_to_display(self):
+        response = get_bible_response("show chapter 2 verses 1 through 10")
+
+        self.assertEqual(
+            response,
+            "Which book of the Bible would you like me to display?",
         )
 
 
@@ -76,9 +121,9 @@ class WebBibleImporterTests(unittest.TestCase):
         parser = ChapterParser()
         parser.feed(
             '<div class="main"><span class="verse" id="V16">16&#160;</span>'
-            'For God so loved the world'
+            "For God so loved the world"
             '<a class="notemark" href="#note">[1]<span>footnote text</span></a>.'
-            '</div>'
+            "</div>"
         )
         parser.close()
 
@@ -109,9 +154,7 @@ class BibleServiceTests(unittest.TestCase):
         list_response = Mock()
         list_response.raise_for_status.return_value = None
         list_response.json.return_value = {
-            "data": [
-                {"id": "niv-id", "abbreviation": "NIV", "name": "NIV"}
-            ]
+            "data": [{"id": "niv-id", "abbreviation": "NIV", "name": "NIV"}]
         }
         passage_response = Mock()
         passage_response.raise_for_status.return_value = None
@@ -130,9 +173,7 @@ class BibleServiceTests(unittest.TestCase):
         service = BibleService(session=session, database_path=self.database)
 
         with patch.dict("os.environ", {"API_BIBLE_KEY": "secret"}):
-            passage, error = service.get_passage(
-                BibleReference("JHN", "John", 3, 16)
-            )
+            passage, error = service.get_passage(BibleReference("JHN", "John", 3, 16))
 
         self.assertIsNone(error)
         self.assertTrue(passage.online)
@@ -171,9 +212,7 @@ class BibleServiceTests(unittest.TestCase):
         session = Mock()
         service = BibleService(session=session, database_path=self.database)
 
-        passage, error = service.get_passage(
-            BibleReference("JHN", "John", 3, 16)
-        )
+        passage, error = service.get_passage(BibleReference("JHN", "John", 3, 16))
 
         self.assertFalse(passage.online)
         self.assertIn("offline test mode", str(error))
@@ -182,9 +221,7 @@ class BibleServiceTests(unittest.TestCase):
     def test_missing_key_uses_web(self):
         service = BibleService(session=Mock(), database_path=self.database)
         with patch.dict("os.environ", {}, clear=True):
-            passage, error = service.get_passage(
-                BibleReference("JHN", "John", 3, 16)
-            )
+            passage, error = service.get_passage(BibleReference("JHN", "John", 3, 16))
         self.assertFalse(passage.online)
         self.assertIsInstance(error, RuntimeError)
 

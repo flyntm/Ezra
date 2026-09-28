@@ -9,7 +9,10 @@ WorkingDirectory=%h/projects/ezra
 ExecStart=%h/projects/ezra/ezra311-env/bin/python %h/projects/ezra/main.py
 # Explicit `systemctl stop` is not restarted; any process exit while the unit
 # should be running is retried, including errors Ezra catches before exiting.
+# Voice quit uses status 90 to distinguish an intentional application exit.
 Restart=always
+RestartPreventExitStatus=90
+SuccessExitStatus=90
 RestartSec=5
 WatchdogSec=30
 TimeoutStopSec=20

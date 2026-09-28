@@ -4,7 +4,6 @@ from pathlib import Path
 import sys
 import unittest
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "tools"))
 
@@ -22,7 +21,12 @@ class CommandReferenceTests(unittest.TestCase):
     def test_alternate_commands_use_indented_rendered_lines(self):
         table = _table(
             ("Command", "What it does"),
-            (("Next slide / Forward / Continue", "Moves onward.",),),
+            (
+                (
+                    "Next slide / Forward / Continue",
+                    "Moves onward.",
+                ),
+            ),
         )
 
         self.assertIn("| Next slide", table)
@@ -33,12 +37,17 @@ class CommandReferenceTests(unittest.TestCase):
         description = "A moderately long description " * 8
         rendered = _table(("Command", "What it does"), (("Test", description),))
 
-        description_cells = [line.split("|")[2].strip() for line in rendered.splitlines()[2:]]
+        description_cells = [
+            line.split("|")[2].strip() for line in rendered.splitlines()[2:]
+        ]
         self.assertTrue(all(len(cell) <= 70 for cell in description_cells))
 
     def test_narration_heading_is_compact_plain_markdown(self):
-        heading = next(line for line in render_reference().splitlines()
-                       if line.startswith("| Command"))
+        heading = next(
+            line
+            for line in render_reference().splitlines()
+            if line.startswith("| Command")
+        )
         self.assertIn("Narrates?", heading)
         self.assertIn("Presentation keys", heading)
         self.assertNotIn("<br>", heading)
@@ -47,7 +56,9 @@ class CommandReferenceTests(unittest.TestCase):
         reference = render_reference()
         self.assertIn("Right / Down", reference)
         self.assertIn("Left / Up", reference)
-        self.assertIn("Space / Escape", reference)
+        self.assertIn("Pauses or resumes", reference)
+        self.assertIn("Space", reference)
+        self.assertIn("Escape", reference)
         self.assertIn("Enter", reference)
         self.assertIn("Number + Enter", reference)
 
@@ -55,8 +66,24 @@ class CommandReferenceTests(unittest.TestCase):
         reference = render_reference()
         self.assertIn("Ctrl+Alt+R", reference)
         self.assertIn("Ctrl+Alt+P", reference)
+        self.assertIn("Ctrl+Alt+T", reference)
+        self.assertIn("Backspace", reference)
+        self.assertIn("Escape", reference)
+        self.assertIn("Toggle wake listening", reference)
+        self.assertIn("On to slide 4", reference)
+        self.assertIn("## Keyboard shortcuts", reference)
+        self.assertIn("| Shortcut", reference)
+        self.assertIn("| What it does", reference)
+        self.assertNotIn("| Context", reference)
+        shortcut_header = next(
+            line for line in reference.splitlines()
+            if line.startswith("| Shortcut")
+        )
+        self.assertLess(shortcut_header.index("Shortcut"), shortcut_header.index("What it does"))
         reveal_line = next(
-            line for line in reference.splitlines() if line.startswith("| Reveal the answer")
+            line
+            for line in reference.splitlines()
+            if line.startswith("| Reveal the answer")
         )
         self.assertEqual(reveal_line.split("|")[4].strip(), "")
 

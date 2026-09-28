@@ -6,7 +6,7 @@
 QUIET_STARTUP = False
 
 # Show detailed audio, wake-model, STT timing, and probe logs.
-VERBOSE_RUNTIME_LOGS = False
+VERBOSE_RUNTIME_LOGS = True
 
 # Toggle post-command audio replay diagnostics.
 ENABLE_PLAYBACK_DIAGNOSTICS = False
@@ -55,9 +55,10 @@ SOUND_GAZE_AMBIENT_MIN_SPEECH_SECONDS = 0.40
 SOUND_GAZE_AMBIENT_HOLD_SECONDS = 2.5
 SOUND_GAZE_AMBIENT_COOLDOWN_SECONDS = 2.5
 SOUND_GAZE_AMBIENT_RESET_SILENCE_SECONDS = 0.35
-# Ignore microphone/VAD activity briefly after an eyelid blink so nearby servo
-# noise cannot be mistaken for a speaker.
-SOUND_GAZE_BLINK_SUPPRESSION_SECONDS = 0.60
+# Avoid repeating the same rejected ambient DoA diagnostic on every audio block.
+SOUND_GAZE_REJECTION_LOG_INTERVAL_SECONDS = 3.0
+# Let eyelid servo vibration settle before using microphone/VAD activity for DoA.
+SOUND_GAZE_BLINK_SUPPRESSION_SECONDS = 1.50
 # Ignore DoA briefly after eye-servo motion as well as eyelid motion.
 DOA_EYE_MOTION_SUPPRESSION_SECONDS = 0.35
 
@@ -233,6 +234,7 @@ PIPER_PATH = "~/projects/piper_tts/piper"
 # Keep Piper and its voice model loaded between utterances. The existing
 # one-shot CLI remains available as an automatic fallback.
 ENABLE_PERSISTENT_PIPER = True
+TTS_SYNTHESIS_TIMEOUT_SECONDS = 30.0
 
 # Path to voice model
 TTS_MODEL_PATH = "/home/flyntm/projects/ezra/voices/en_US-bryce-medium.onnx"
@@ -283,6 +285,9 @@ TTS_HUMOR_PAUSE_SECONDS = 0.6
 # Hold the happy expression through the wink and a brief beat after it opens.
 TTS_SMILE_PAUSE_SECONDS = 2.0
 
+# Hold the Bible passage on screen briefly after its spoken reading finishes.
+SCRIPTED_BIBLE_RETURN_DELAY_SECONDS = 5.0
+
 # [Smile] is a silent physical gesture; it does not add a spoken response.
 TTS_SMILE_RESPONSES = ("",)
 
@@ -316,6 +321,8 @@ THINKING_COMMENTS = (
 TTS_PRONUNCIATION_OVERRIDES = {
     "Plano": "Play-no",
     "goofy": "goo-fee",
+    "Ezra": "Ezz-ruh",
+    "Isaiah": "eyezayuh",
 }
 
 # Delay before playback (seconds)
@@ -531,9 +538,9 @@ WAKE_BLOCK_SIZE = 1024
 WAKE_THRESHOLD = 0.20
 WAKE_REARM_THRESHOLD = 0.05
 
-# Require the wake model to cross its threshold in more than one recent audio
-# block. A single score spike is commonly caused by lyrics or transient sounds.
-WAKE_MIN_SCORE_HITS = 2
+# Require the wake model to cross its threshold across several recent audio
+# blocks. Two hits allowed conversational audio to trigger false wake-ups.
+WAKE_MIN_SCORE_HITS = 3
 
 # Reject very quiet model matches caused by room/mechanical background noise.
 # This is evaluated against the peak RMS over the same recent blocks used for

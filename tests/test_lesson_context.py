@@ -11,6 +11,24 @@ from lesson_context import ContextChunk, augment_question, retrieve_context
 
 
 class LessonContextTests(unittest.TestCase):
+    def test_current_lesson_export_is_loaded_and_changes_invalidate_cache(self):
+        import lesson_context
+        path = self.directory / "lesson.json"
+        path.write_text(json.dumps({"text": "Peter explains the resurrection."}) + "\n")
+        self.assertEqual(lesson_context._lesson_material(self.directory)[0].text,
+                         "Peter explains the resurrection.")
+        path.write_text(json.dumps({"text": "Peter explains the resurrection and hope."}) + "\n")
+        self.assertIn("hope", lesson_context._lesson_material(self.directory)[0].text)
+
+    def test_deployed_lesson_four_is_available(self):
+        import lesson_context
+        chunks = lesson_context._jsonl_chunks(lesson_context.PRESENTATIONS_DIR)
+        current = [c for c in chunks if c.label == "acts-Lesson_Four"]
+        source = lesson_context.PRESENTATIONS_DIR / "acts-Lesson_Four.json"
+        records = [json.loads(line) for line in source.read_text().splitlines() if line.strip()]
+        self.assertTrue(current)
+        self.assertEqual([c.text for c in current], [record["text"].strip() for record in records])
+
     def setUp(self):
         import lesson_context
 

@@ -15,11 +15,11 @@ from config import (
 import presentation_recovery
 import operating_mode
 from service_watchdog import watchdog
+import presentation_controls
 
 from .browser_slideshow import BrowserSlideshow
 from .powerpoint import PowerPointDeck, PresentationError, RehearsalSlideshow
 from .presenter import audience_look_targets, speak_with_head_motion
-
 
 PRESENTATIONS_DIR = Path(__file__).parent
 # Kept as a stable fixture for tests and tools that explicitly inspect the
@@ -49,6 +49,7 @@ def discover_presentation(directory=PRESENTATIONS_DIR):
         )
     return decks[0]
 
+
 _START_PATTERN = re.compile(
     r"\b(?:start|begin|open|present|run)\b.*\b(?:acts|presentation|lesson)\b",
     re.IGNORECASE,
@@ -69,9 +70,7 @@ _STOP_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _NEXT_PATTERN = re.compile(r"\b(?:next|forward)\b(?:\s+slide)?\b", re.IGNORECASE)
-_PREVIOUS_PATTERN = re.compile(
-    r"\b(?:previous|back)\b(?:\s+slide)?\b", re.IGNORECASE
-)
+_PREVIOUS_PATTERN = re.compile(r"\b(?:previous|back)\b(?:\s+slide)?\b", re.IGNORECASE)
 _REVEAL_PATTERN = re.compile(
     r"\b(?:reveal|show)\b.*\b(?:answers?|responses?)\b"
     r"|\bthe\s+answers?\s+(?:is\s+)?please\b",
@@ -98,7 +97,7 @@ _QUESTION_JUMP_PATTERN = re.compile(
 )
 _SLIDE_JUMP_PATTERN = re.compile(
     r"\b(?:"
-    r"(?:go\s+to|show|display)\s+(?:us\s+)?(?:the\s+)?"
+    r"(?:go\s+to|on\s+to|show|display)\s+(?:us\s+)?(?:the\s+)?"
     r"slide(?:\s+number)?\s+"
     r"(?P<number_after>\d{1,3}(?:st|nd|rd|th)?|"
     r"[a-z]+(?:[\s-]+[a-z]+){0,2})"
@@ -239,34 +238,34 @@ class LessonPresentationSession:
         self.persist_recovery = slideshow is None
         self.slideshow = slideshow or BrowserSlideshow(self.deck.path)
         if hasattr(self.slideshow, "control_handler"):
-            self.slideshow.control_handler = self.handle_keyboard_control
+            self.slideshow.control_handler = self.queue_keyboard_control
         self.slide_index = 0
         self.answer_revealed = False
         self.active = False
         self._narration_lock = threading.RLock()
-        # Browser controls arrive on independent HTTP worker threads. Keep a
-        # generation so narration queued by an earlier key press cannot run
-        # after a later key press has already selected another slide.
+        # Browser controls queue work for main. A generation also invalidates
+        # current/queued narration immediately when another key is pressed.
         self._navigation_generation = 0
 
     def _navigation_changed(self):
         self._navigation_generation += 1
         return self._navigation_generation
 
-    def handle_keyboard_control(self, action):
+    def queue_keyboard_control(self, action):
+        presentation_controls.submit(self, action)
+
+    def handle_keyboard_control(self, action, narrate=True):
         """Apply a narrated navigation request from the kiosk browser."""
         if not self.active:
             return
         try:
             if action == "next":
-                self.next()
+                self.next(narrate=narrate)
             elif action == "previous":
-                previous_index = self.slide_index
                 self.previous()
-                if self.slide_index != previous_index:
-                    self.narrate_current()
             elif action == "narrate":
-                self.narrate_current()
+                if narrate:
+                    self.narrate_current()
             elif action == "skip":
                 self._navigation_changed()
             elif action.startswith("go-to:"):
@@ -303,7 +302,7 @@ class LessonPresentationSession:
         if expected_generation is None:
             expected_generation = self._navigation_generation
         with self._narration_lock:
-            if expected_generation != self._navigation_generation:
+            if not presentation_controls.begin_narration(self, expected_generation):
                 print(
                     "[presentation] narration_discarded=True "
                     "reason=superseded_navigation"
@@ -315,15 +314,14 @@ class LessonPresentationSession:
         slide_number = self.slide_index + 1
         automatic = self.deck.auto_advance[self.slide_index]
         playback_complete = threading.Event()
-        print(
-            f"[presentation] slide={slide_number} "
-            f"automatic_advance={automatic}"
-        )
+        print(f"[presentation] slide={slide_number} " f"automatic_advance={automatic}")
 
         def speech_started():
+            watchdog.progress()
             print(f"[presentation] slide={slide_number} speech_start")
 
         def speech_completed():
+            watchdog.progress()
             print(f"[presentation] slide={slide_number} speech_complete")
             playback_complete.set()
 
@@ -341,9 +339,7 @@ class LessonPresentationSession:
                     on_playback_start=speech_started,
                     on_playback_complete=speech_completed,
                     allow_keyboard_skip=True,
-                    presentation_skip_event=getattr(
-                        self.slideshow, "skip_event", None
-                    ),
+                    presentation_skip_event=getattr(self.slideshow, "skip_event", None),
                     chunk_max_chars=PRESENTATION_TTS_CHUNK_MAX_CHARS,
                     sentence_silence=SCRIPTED_TTS_SENTENCE_SILENCE,
                 )
@@ -391,7 +387,7 @@ class LessonPresentationSession:
             )
         return interrupted
 
-    def next(self):
+    def next(self, narrate=True):
         self._require_active()
         if self.slide_index >= self.deck.slide_count - 1:
             self.speak("This is the final slide.")
@@ -408,7 +404,7 @@ class LessonPresentationSession:
             f"[presentation] navigation_command=next "
             f"resulting_slide={self.slide_index + 1}"
         )
-        return self._speak_current(generation)
+        return self._speak_current(generation) if narrate else False
 
     def previous(self):
         self._require_active()
@@ -491,12 +487,19 @@ class LessonPresentationSession:
         return False
 
     def stop(self, clear_recovery=True):
-        if self.active:
-            self.slideshow.close()
-        self.active = False
-        watchdog.remove_health_check("presentation display")
-        if clear_recovery:
-            presentation_recovery.clear()
+        self._navigation_changed()
+        presentation_controls.discard(self)
+        skip = getattr(self.slideshow, "skip_event", None)
+        if skip is not None:
+            skip.set()
+        try:
+            if self.active:
+                self.slideshow.close()
+        finally:
+            self.active = False
+            watchdog.remove_health_check("presentation display")
+            if clear_recovery:
+                presentation_recovery.clear()
 
     def _require_active(self):
         if not self.active:
@@ -569,12 +572,15 @@ def has_active_presentation():
     return _session is not None and _session.active
 
 
-def stop_presentation():
-    """Close the active slideshow and discard its restart state."""
+def stop_presentation(clear_recovery=True):
+    """Close the slideshow, preserving restart state during process cleanup."""
     global _session
     if _session is None:
         return False
-    _session.stop()
+    if clear_recovery:
+        _session.stop()
+    else:
+        _session.stop(clear_recovery=False)
     _session = None
     operating_mode.set_mode(operating_mode.GENERAL)
     return True
@@ -666,8 +672,10 @@ def handle_active_command(command, speak):
         _DISPLAY_ANSWERS_PATTERN,
         _NARRATE_PATTERN,
     )
-    if not question_jump_match and not jump_match and not any(
-        pattern.search(navigation_command) for pattern in patterns
+    if (
+        not question_jump_match
+        and not jump_match
+        and not any(pattern.search(navigation_command) for pattern in patterns)
     ):
         return False
     if not has_active_presentation():
@@ -711,9 +719,8 @@ def handle_active_command(command, speak):
                 _session.narrate_current()
             return True
         if jump_match:
-            matched_number = (
-                jump_match.group("number_after")
-                or jump_match.group("number_before")
+            matched_number = jump_match.group("number_after") or jump_match.group(
+                "number_before"
             )
             slide_number = _parse_slide_number(matched_number)
             if slide_number is None:

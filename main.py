@@ -9,6 +9,7 @@ from pathlib import Path
 import state
 import operating_mode
 import presentation_recovery
+import presentation_controls
 
 from audio import get_last_command_doa, listen
 from audio_debug import playback_diagnostic, save_debug_wav
@@ -32,12 +33,13 @@ from item_tests import display_command_text_diagnostic, display_doa_diagnostic
 from local_ai_server import start_local_ai_server, stop_local_ai_server
 from network_status import internet_access_allowed
 from network_status import start_connectivity_monitor, stop_connectivity_monitor
-from service_runtime import install_shutdown_signal_handlers, startup_announcement
+from service_runtime import install_shutdown_signal_handlers, startup_announcement, exit_status
 from service_watchdog import watchdog
 from presentations import restore_presentation, stop_presentation
 from stt import transcribe
 from thinking_comments import prepare_thinking_comments, start_comment
-from tts import generate_speech_file, prepare_speech_cache, speak, speak_cached
+from tts import (generate_speech_file, prepare_speech_cache, speak, speak_cached,
+                 cancel_speech, wait_for_speech)
 from wake_word import (
     CONTINUOUS_CAPTURE_AFTER_WAKE,
     get_last_command_doa as get_last_continuous_command_doa,
@@ -45,6 +47,8 @@ from wake_word import (
     get_last_command_capture_timing,
     get_last_wake_detected_at,
     reset_idle_timer,
+    is_sleeping,
+    wake_if_sleeping,
     wait_for_wake_word_with_audio,
 )
 
@@ -227,26 +231,31 @@ def shutdown_robot():
     state.shutting_down = True
 
     print("\n🛑 Shutting down Ezra...")
+    cancel_speech()
+    if not wait_for_speech():
+        print("⚠️ Speech cleanup did not finish promptly")
 
-    try:
-        close_bible_display()
-        stop_presentation()
-        stop_local_ai_server()
+    for cleanup in (
+        close_bible_display,
+        lambda: stop_presentation(clear_recovery=state.exit_requested),
+        stop_local_ai_server,
+    ):
+        try:
+            cleanup()
+        except Exception as e:
+            print(f"Shutdown cleanup error: {e}")
 
-        if ENABLE_HEAD_TRACKING and not ENABLE_INTERACTION_DIAGNOSTIC:
+    if ENABLE_HEAD_TRACKING and not ENABLE_INTERACTION_DIAGNOSTIC:
+        try:
             from robot.head_tracking import head_tracker
-
             head_tracker.center()
-
+        except Exception as e:
+            print(f"Shutdown head-centering error: {e}")
+    try:
         from robot import robot_emotions
-
-        robot_emotions.stop(
-            clear_mouth=True,
-            relax_servos=False,
-        )
-
+        robot_emotions.stop(clear_mouth=True, relax_servos=False)
     except Exception as e:
-        print(f"Shutdown error: {e}")
+        print(f"Shutdown face error: {e}")
 
 
 def main():
@@ -294,6 +303,16 @@ def main():
     try:
         while not state.shutting_down:
 
+            if presentation_controls.pending():
+                watchdog.busy()
+                wake_if_sleeping()
+                try:
+                    presentation_controls.process_pending()
+                finally:
+                    set_emotion(EMOTION_STANDBY)
+                    reset_idle_timer()
+                follow_up_ready = False
+                continue
             watchdog.idle()
 
             # Answers open a fresh listening window; silence returns to wake detection.
@@ -312,6 +331,8 @@ def main():
             else:
                 follow_up_ready = False
                 wake_text, wake_audio = wait_for_wake_word_with_audio()
+                if wake_text is None:
+                    continue
             watchdog.busy()
 
             command_timing = None
@@ -509,11 +530,12 @@ def main():
                 # Spoken local commands return to standby when TTS finishes.
                 # Silent commands, such as direct slide jumps or displaying
                 # answers, need the same reset explicitly.
-                set_emotion(EMOTION_STANDBY)
+                if not is_sleeping():
+                    set_emotion(EMOTION_STANDBY)
                 # Run optional audio replay diagnostics after Ezra responds.
                 maybe_playback_diagnostic()
                 finish_command_timing(command_timing, "local command")
-                follow_up_ready = ENABLE_FOLLOW_UP_LISTENING
+                follow_up_ready = ENABLE_FOLLOW_UP_LISTENING and not is_sleeping()
                 continue
 
             # Send all other commands to Ezra's brain.
@@ -564,6 +586,9 @@ def main():
                         try:
                             if speak(sentence):
                                 streamed_speech_interrupted.set()
+                        except Exception as exc:
+                            streamed_speech_interrupted.set()
+                            print(f"⚠️ Streamed speech failed: {exc}")
                         finally:
                             if command_timing is not None:
                                 clear_active_command_timing()
@@ -582,7 +607,9 @@ def main():
                     prefix="ezra-streamed-remainder-"
                 ) as directory:
                     audio_path = Path(directory) / "remainder.wav"
-                    prepared = generate_speech_file(sentence, audio_path)
+                    prepared = generate_speech_file(
+                        sentence, audio_path, cancel_event=streamed_speech_interrupted,
+                    )
                     streamed_speech_thread.join()
                     if streamed_speech_interrupted.is_set():
                         return True
@@ -616,7 +643,9 @@ def main():
                 continue
             except Exception as e:
                 print(f"❌ Ezra brain error: {e}")
-
+                stop_thinking_comment(comment_cancel, comment_thread)
+                if streamed_speech_thread is not None:
+                    streamed_speech_thread.join()
                 set_emotion("confused")
                 speak("I'm sorry. I had trouble answering that.")
                 reset_idle_timer()
@@ -682,3 +711,4 @@ def main():
 # Run main only when this file is started directly.
 if __name__ == "__main__":
     main()
+    raise SystemExit(exit_status())

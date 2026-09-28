@@ -56,6 +56,7 @@ class HeadTracker:
     def __init__(self):
         self._head_cal = calibration.load_cal()["head"]
         self._current_yaw = 0.0
+        self._command_target_yaw = None
         self._center_hold = False
         # Presentation movement runs in a background thread. Serialize every
         # head command so centering, speaker tracking, and audience motion can
@@ -171,6 +172,28 @@ class HeadTracker:
         """Block audience turns while a scripted centered gesture is active."""
         with self._motion_lock:
             self._center_hold = bool(active)
+
+    def remember_command_bearing(self, bearing):
+        """Save the speaker target before any automatic post-capture turn."""
+        with self._motion_lock:
+            self._command_target_yaw = (
+                None if bearing is None else _clamp(
+                    self._current_yaw + float(bearing),
+                    -HEAD_TRACKING_MAX_YAW_DEGREES,
+                    HEAD_TRACKING_MAX_YAW_DEGREES,
+                )
+            )
+
+    def face_command_speaker(self):
+        """Honor an explicit look request, including in Presentation mode."""
+        with self._motion_lock:
+            if self._command_target_yaw is None or self._center_hold:
+                return False
+            correction = self._command_target_yaw - self._current_yaw
+            # Automatic tracking may already have completed this exact turn.
+            if abs(correction) <= HEAD_TRACKING_CENTER_DEADBAND_DEGREES:
+                return True
+            return self.turn_toward_bearing(correction, source="look request")
 
     def _turn_by_correction(
         self,

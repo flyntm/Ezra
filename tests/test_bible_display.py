@@ -55,7 +55,64 @@ class BibleDisplayTests(unittest.TestCase):
         rendered = render_passage_html("Psalm 1", "Long passage")
 
         self.assertIn("fetch('/state'", rendered)
-        self.assertIn("maximum*state.progress", rendered)
+        self.assertIn("readingY-innerHeight*readingPosition", rendered)
+        self.assertIn("fetch('/pause'", rendered)
+        self.assertIn("event.key==='ArrowUp'||event.key==='ArrowDown'", rendered)
+        self.assertIn("state.scrolls", rendered)
+        self.assertNotIn("centerPassageStart", rendered)
+        self.assertIn("if(readingY<=innerHeight*readingPosition)", rendered)
+
+    def test_voice_scroll_requests_are_queued_as_viewport_steps(self):
+        display = BibleDisplay("Psalm 1", "Long passage")
+
+        display.queue_scroll("down")
+        display.queue_scroll("up")
+
+        self.assertEqual(display.take_scroll_requests(), [1, -1])
+        self.assertEqual(display.take_scroll_requests(), [])
+
+    def test_display_only_mode_does_not_enable_speech_following(self):
+        display = BibleDisplay("Psalm 1", "Long passage", read_along=False)
+
+        self.assertFalse(display.read_along)
+        display.begin_reading()
+        self.assertEqual(display.reading_session, 1)
+
+    def test_stopped_reading_freezes_until_reading_starts_again(self):
+        display = BibleDisplay("Psalm 1", "word " * 260)
+        with patch("bible_display.time.monotonic", return_value=10.0) as clock:
+            display.begin_reading()
+            clock.return_value = 35.0
+            display.stop_reading()
+            clock.return_value = 200.0
+            self.assertEqual(display.reading_progress(), 0.25)
+            display.stop_reading()
+            self.assertEqual(display.reading_progress(), 0.25)
+            display.begin_reading()
+            self.assertEqual(display.reading_progress(), 0.0)
+
+    def test_ending_completed_reading_keeps_bottom_position(self):
+        display = BibleDisplay("Psalm 1", "word " * 260)
+        display.begin_reading()
+        display.finish_reading()
+        display.stop_reading()
+        self.assertEqual(display.reading_progress(), 1.0)
+
+    def test_ending_before_playback_keeps_top_position(self):
+        display = BibleDisplay("Psalm 1", "word " * 260)
+        display.stop_reading()
+        self.assertEqual(display.reading_progress(), 0.0)
+
+    def test_pausing_reading_freezes_scroll_until_resumed(self):
+        display = BibleDisplay("Psalm 1", "word " * 260)
+        with patch(
+            "bible_display.time.monotonic", side_effect=[10.0, 35.0, 200.0, 200.0]
+        ):
+            display.begin_reading()
+            display.toggle_reading()
+            self.assertEqual(display.reading_progress(), 0.25)
+            display.toggle_reading()
+            self.assertEqual(display.reading_progress(), 0.25)
 
 
 if __name__ == "__main__":

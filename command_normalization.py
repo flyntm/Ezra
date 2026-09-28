@@ -1,4 +1,5 @@
 import string
+import re
 
 from config import (
     WAKE_ONLY_PHRASES,
@@ -11,7 +12,6 @@ WAKE_SECOND_WORDS = WAKE_WORDS | set(WAKE_SECOND_WORD_VARIANTS)
 WAKE_ONLY_SET = {p.lower().strip() for p in WAKE_ONLY_PHRASES}
 FOLLOW_UP_CANCEL_PHRASES = {
     "ah",
-    "cancel",
     "hmm",
     "never mind",
     "nevermind",
@@ -32,6 +32,8 @@ FOLLOW_UP_CANCEL_PHRASES = {
 # are commonly coughs, filler, or wake-word handoff noise such as "pfft".
 ACTIONABLE_SINGLE_WORD_COMMANDS = {
     "back",
+    "cancel",
+    "chancel",
     "explain",
     "exit",
     "forward",
@@ -47,6 +49,13 @@ ACTIONABLE_SINGLE_WORD_COMMANDS = {
 }
 
 
+def is_cancel_command(command):
+    """Return True when cancel or its common ASR variant ends the utterance."""
+
+    words = re.findall(r"[a-z]+", command.lower())
+    return bool(words and words[-1] in {"cancel", "chancel"})
+
+
 def strip_wake_word(text):
     """Remove wake-word prefixes from recognized text."""
 
@@ -54,7 +63,23 @@ def strip_wake_word(text):
         return ""
 
     normalized = text.lower()
-    normalized = normalized.translate(str.maketrans("", "", string.punctuation))
+    # Keep separators between digits: Scripture references, ranges, decimals,
+    # times and fractions lose their meaning when punctuation is deleted.
+    normalized = re.sub(
+        "[" + re.escape(string.punctuation) + "]",
+        lambda match: (
+            match.group()
+            if (
+                match.group() in ":-./"
+                and match.start() > 0
+                and match.end() < len(normalized)
+                and normalized[match.start() - 1].isdigit()
+                and normalized[match.end()].isdigit()
+            )
+            else ""
+        ),
+        normalized,
+    )
     normalized = normalized.strip()
 
     words = normalized.split()
@@ -90,17 +115,13 @@ def is_wake_word_only(command):
 def is_follow_up_cancel(command):
     """Return True for a declined follow-up or a noise/filler-only transcript."""
 
-    normalized = command.lower().translate(
-        str.maketrans("", "", string.punctuation)
-    )
+    normalized = command.lower().translate(str.maketrans("", "", string.punctuation))
     return " ".join(normalized.split()) in FOLLOW_UP_CANCEL_PHRASES
 
 
 def is_unclear_single_word(command):
     """Return whether a lone transcript is unlikely to be a real command."""
 
-    normalized = command.lower().translate(
-        str.maketrans("", "", string.punctuation)
-    )
+    normalized = command.lower().translate(str.maketrans("", "", string.punctuation))
     words = normalized.split()
     return len(words) == 1 and words[0] not in ACTIONABLE_SINGLE_WORD_COMMANDS

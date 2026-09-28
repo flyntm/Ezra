@@ -55,6 +55,35 @@ class PresentationHeadTrackingTests(unittest.TestCase):
             50.0, step_delay_seconds=None, stop_event=None
         )
 
+    def test_explicit_look_turns_in_presentation_mode(self):
+        self.tracker.remember_command_bearing(-45)
+        self.assertTrue(self.tracker.face_command_speaker())
+        self.move.assert_called_once_with(
+            -25.0, step_delay_seconds=None, stop_event=None
+        )
+
+    def test_explicit_look_does_not_repeat_automatic_correction(self):
+        self.tracker.remember_command_bearing(30)
+        self.tracker._current_yaw = 50.0  # automatic tracking has finished
+        self.assertTrue(self.tracker.face_command_speaker())
+        self.move.assert_not_called()
+
+    def test_uncertain_new_command_cannot_reuse_old_speaker(self):
+        self.tracker.remember_command_bearing(30)
+        self.tracker.remember_command_bearing(None)
+        self.assertFalse(self.tracker.face_command_speaker())
+        self.move.assert_not_called()
+
+    def test_explicit_look_keeps_servo_limits_and_center_hold(self):
+        self.tracker.remember_command_bearing(180)
+        self.assertTrue(self.tracker.face_command_speaker())
+        self.assertEqual(self.move.call_args.args[0],
+                         self.tracker.face_command_speaker.__globals__["HEAD_TRACKING_MAX_YAW_DEGREES"])
+        self.move.reset_mock()
+        self.tracker.set_center_hold(True)
+        self.assertFalse(self.tracker.face_command_speaker())
+        self.move.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -10,6 +10,7 @@ from config import *
 from network_status import internet_access_allowed
 from lesson_context import augment_question
 from operating_mode import presentation_context_enabled
+from local_ai_server import start_local_ai_server
 
 # Load environment variables
 load_dotenv(Path(__file__).parent / ".env", override=True)
@@ -167,6 +168,19 @@ def _ask_openai_streaming(messages, on_sentence):
     streamed_sentences = []
     interrupted = False
     first_sentence_delivered = False
+    delivered_sentences = []
+
+    def deliver(sentence):
+        # Playback failure is not a model/network failure and must never cause
+        # a new full answer after speech has already begun.
+        try:
+            stopped = bool(on_sentence(sentence))
+        except Exception as exc:
+            print(f"⚠️ Streamed speech delivery failed: {exc}")
+            return True
+        if not stopped:
+            delivered_sentences.append(sentence)
+        return stopped
 
     stream_failed = False
     try:
@@ -190,7 +204,7 @@ def _ask_openai_streaming(messages, on_sentence):
                     # one smooth second batch rather than many tiny TTS calls.
                     if len(streamed_sentences) == 1:
                         first_sentence_delivered = True
-                        if on_sentence(sentence):
+                        if deliver(sentence):
                             interrupted = True
                             break
                 if interrupted:
@@ -209,22 +223,23 @@ def _ask_openai_streaming(messages, on_sentence):
 
     if not interrupted and streamed_sentences and not first_sentence_delivered:
         first_sentence_delivered = True
-        interrupted = bool(on_sentence(streamed_sentences[0]))
+        interrupted = deliver(streamed_sentences[0])
 
     if not interrupted and len(streamed_sentences) > 1:
-        interrupted = bool(on_sentence(" ".join(streamed_sentences[1:])))
+        interrupted = deliver(" ".join(streamed_sentences[1:]))
 
     data = _parse_brain_response(raw_text)
     if streamed_sentences:
         # If the stream was intentionally stopped, raw JSON may be incomplete.
         # Preserve exactly what was delivered for conversation history.
-        data["response"] = " ".join(streamed_sentences).strip()
+        data["response"] = " ".join(delivered_sentences).strip()
     data["streamed"] = bool(streamed_sentences)
     data["interrupted"] = interrupted
     return data
 
 
 def _ask_local(messages):
+    start_local_ai_server()
     local_messages = [
         {"role": "system", "content": _system_prompt()},
         *[dict(message) for message in messages],
@@ -325,7 +340,7 @@ def ask_ezra(user_text, on_sentence=None):
             try:
                 text = _ask_local(request_messages)
                 data = _parse_brain_response(text)
-            except requests.RequestException as exc:
+            except (requests.RequestException, OSError, RuntimeError) as exc:
                 raise InternetUnavailableError(
                     "Neither the internet nor the local AI is available"
                 ) from exc

@@ -47,16 +47,19 @@ def _extract_weather_location(command):
 
 
 def _is_weather_query(command):
-    return any(
-        phrase in command
-        for phrase in (
-            "weather",
-            "temperature",
-            "forecast",
-            "rain",
-            "snow",
-        )
-    )
+    command = command.lower()
+    if re.search(r"\b(?:why|explain|define|meaning|causes?)\b", command):
+        return False
+    if re.search(r"\bhow\b", command) and not re.search(
+        r"\bhow\s+(?:is|will|does)\s+(?:the\s+)?weather\b", command
+    ):
+        return False
+    if re.search(r"\b(?:weather|forecast)\b", command):
+        return True
+    if re.search(r"\btemperature\b", command):
+        return not re.search(r"\b(?:body|boiling|freezing|oven|cpu|processor)\b", command)
+    return bool(re.search(r"\b(?:rain(?:ing)?|snow(?:ing)?)\b", command) and re.search(
+        r"\b(?:today|tonight|tomorrow|outside|here|currently|will|is it|going to)\b", command))
 
 
 def _is_news_query(command):

@@ -32,7 +32,6 @@ from presentations.common import (
 import operating_mode
 from presentations.presenter import audience_look_targets, speak_with_head_motion
 
-
 # Exercise whichever single lesson deck is currently deployed. Presentation
 # filenames change between lessons and are not part of the controller contract.
 DECK_PATH = discover_presentation()
@@ -114,23 +113,23 @@ class PresentationCommandPatternTests(unittest.TestCase):
         self.assertIsNotNone(match)
         self.assertEqual(match.group("number_after"), "8")
 
+    def test_on_to_slide_uses_the_same_numbered_jump_parser(self):
+        match = _SLIDE_JUMP_PATTERN.search("On to slide 12")
+
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group("number_after"), "12")
+
     def test_sign_number_is_normalized_to_slide_number(self):
-        command = _normalize_presentation_command(
-            "go to sign 2 and explain"
-        )
+        command = _normalize_presentation_command("go to sign 2 and explain")
 
         self.assertEqual(command, "go to slide 2 and explain")
 
     def test_stt_and_its_suffix_is_treated_as_and_explain(self):
         command = "it is right go to slide two and its"
         normalized = _normalize_presentation_command(command)
-        navigation = lesson_presentation._EXPLAIN_SUFFIX_PATTERN.sub(
-            "", normalized
-        )
+        navigation = lesson_presentation._EXPLAIN_SUFFIX_PATTERN.sub("", normalized)
 
-        self.assertTrue(
-            lesson_presentation._EXPLAIN_SUFFIX_PATTERN.search(normalized)
-        )
+        self.assertTrue(lesson_presentation._EXPLAIN_SUFFIX_PATTERN.search(normalized))
         match = _SLIDE_JUMP_PATTERN.search(navigation)
         self.assertIsNotNone(match)
         self.assertEqual(match.group("number_after"), "two")
@@ -187,7 +186,27 @@ class PresenterMotionTests(unittest.TestCase):
 
         self.assertTrue(movement_stopped.is_set())
 
+
 class PowerPointDeckTests(unittest.TestCase):
+    @staticmethod
+    def add_relationships(package, with_notes=False):
+        p = "http://schemas.openxmlformats.org/presentationml/2006/main"
+        r = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+        rel = "http://schemas.openxmlformats.org/package/2006/relationships"
+        package.writestr(
+            "ppt/presentation.xml",
+            f'<p:presentation xmlns:p="{p}" xmlns:r="{r}"><p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst></p:presentation>',
+        )
+        package.writestr(
+            "ppt/_rels/presentation.xml.rels",
+            f'<Relationships xmlns="{rel}"><Relationship Id="rId1" Type="{r}/slide" Target="slides/slide1.xml"/></Relationships>',
+        )
+        if with_notes:
+            package.writestr(
+                "ppt/slides/_rels/slide1.xml.rels",
+                f'<Relationships xmlns="{rel}"><Relationship Id="rId2" Type="{r}/notesSlide" Target="../notesSlides/notesSlide1.xml"/></Relationships>',
+            )
+
     def test_discovers_the_only_presentation_in_a_directory(self):
         with tempfile.TemporaryDirectory() as directory:
             expected = Path(directory) / "talk.pptx"
@@ -222,6 +241,7 @@ class PowerPointDeckTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "minimal.pptx"
             with zipfile.ZipFile(path, "w") as package:
+                self.add_relationships(package)
                 package.writestr("ppt/slides/slide1.xml", "<slide />")
             deck = PowerPointDeck.load(path)
         self.assertEqual(deck.notes, ("",))
@@ -230,6 +250,7 @@ class PowerPointDeckTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "markers.pptx"
             with zipfile.ZipFile(path, "w") as package:
+                self.add_relationships(package, with_notes=True)
                 package.writestr(
                     "ppt/slides/slide1.xml",
                     '<p:sld xmlns:p="http://schemas.openxmlformats.org/'
@@ -241,12 +262,12 @@ class PowerPointDeckTests(unittest.TestCase):
                     'presentationml/2006/main" '
                     'xmlns:a="http://schemas.openxmlformats.org/'
                     'drawingml/2006/main">'
-                    '<a:p><a:r><a:t>This is the script. NEXT SLIDE is ordinary '
-                    'text.</a:t></a:r></a:p>'
-                    '<a:p><a:r><a:t>[NEXT SLIDE]</a:t></a:r></a:p>'
-                    '<a:p><a:r><a:t>[Sources]</a:t></a:r></a:p>'
-                    '<a:p><a:r><a:t>- Acts 1:8</a:t></a:r></a:p>'
-                    '</p:notes>',
+                    "<a:p><a:r><a:t>This is the script. NEXT SLIDE is ordinary "
+                    "text.</a:t></a:r></a:p>"
+                    "<a:p><a:r><a:t>[NEXT SLIDE]</a:t></a:r></a:p>"
+                    "<a:p><a:r><a:t>[Sources]</a:t></a:r></a:p>"
+                    "<a:p><a:r><a:t>- Acts 1:8</a:t></a:r></a:p>"
+                    "</p:notes>",
                 )
             deck = PowerPointDeck.load(path)
 
@@ -256,28 +277,30 @@ class PowerPointDeckTests(unittest.TestCase):
         )
         self.assertEqual(deck.auto_advance, (True,))
 
-    def test_title_case_next_slide_marker_is_also_supported(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "title-case-marker.pptx"
-            with zipfile.ZipFile(path, "w") as package:
-                package.writestr(
-                    "ppt/slides/slide1.xml",
-                    '<p:sld xmlns:p="http://schemas.openxmlformats.org/'
-                    'presentationml/2006/main" />',
-                )
-                package.writestr(
-                    "ppt/notesSlides/notesSlide1.xml",
-                    '<p:notes xmlns:p="http://schemas.openxmlformats.org/'
-                    'presentationml/2006/main" '
-                    'xmlns:a="http://schemas.openxmlformats.org/'
-                    'drawingml/2006/main">'
-                    '<a:p><a:r><a:t>Speak this. [Next Slide]</a:t></a:r></a:p>'
-                    '</p:notes>',
-                )
-            deck = PowerPointDeck.load(path)
+    def test_next_slide_marker_is_case_insensitive(self):
+        for marker in ("[NEXT SLIDE]", "[Next Slide]", "[next slide]", "[nExT sLiDe]"):
+            with tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "title-case-marker.pptx"
+                with zipfile.ZipFile(path, "w") as package:
+                    self.add_relationships(package, with_notes=True)
+                    package.writestr(
+                        "ppt/slides/slide1.xml",
+                        '<p:sld xmlns:p="http://schemas.openxmlformats.org/'
+                        'presentationml/2006/main" />',
+                    )
+                    package.writestr(
+                        "ppt/notesSlides/notesSlide1.xml",
+                        '<p:notes xmlns:p="http://schemas.openxmlformats.org/'
+                        'presentationml/2006/main" '
+                        'xmlns:a="http://schemas.openxmlformats.org/'
+                        'drawingml/2006/main">'
+                        f"<a:p><a:r><a:t>Speak this. {marker}</a:t></a:r></a:p>"
+                        "</p:notes>",
+                    )
+                deck = PowerPointDeck.load(path)
 
-        self.assertEqual(deck.notes, ("Speak this.",))
-        self.assertEqual(deck.auto_advance, (True,))
+            self.assertEqual(deck.notes, ("Speak this.",))
+            self.assertEqual(deck.auto_advance, (True,))
 
     def test_browser_conversion_contains_slides_and_reveal_content(self):
         deck = PowerPointDeck.load(DECK_PATH)
@@ -286,7 +309,9 @@ class PowerPointDeckTests(unittest.TestCase):
             rendered.count('<section class="slide"'),
             deck.slide_count,
         )
-        self.assertIn("event.key==='Escape'||event.key===' '", rendered)
+        self.assertIn("event.key==='Escape'", rendered)
+        self.assertIn("event.key===' '", rendered)
+        self.assertIn("if(!event.repeat)fetch('/pause'", rendered)
         self.assertIn("ArrowRight:'next'", rendered)
         self.assertIn("ArrowDown:'next'", rendered)
         self.assertIn("ArrowLeft:'previous'", rendered)
@@ -295,6 +320,9 @@ class PowerPointDeckTests(unittest.TestCase):
         self.assertNotIn("PageUp:'previous'", rendered)
         self.assertIn("'/control/narrate'", rendered)
         self.assertIn("/control/go-to/${target}", rendered)
+        self.assertIn("event.key.toLowerCase()==='w'", rendered)
+        self.assertIn("fetch('/listen-toggle'", rendered)
+        self.assertIn("Wake listening off", rendered)
         self.assertNotIn("r:'reveal'", rendered)
         self.assertNotIn("R:'reveal'", rendered)
         self.assertIn("fetch('/skip'", rendered)
@@ -431,9 +459,7 @@ class ActsSessionTests(unittest.TestCase):
         self.addCleanup(setattr, lesson_presentation, "_session", None)
         self.assertTrue(handle_active_command("go to slide two", self.session.speak))
         self.assertEqual(len(self.spoken), 1)
-        self.assertTrue(
-            handle_active_command("explain this slide", self.session.speak)
-        )
+        self.assertTrue(handle_active_command("explain this slide", self.session.speak))
         self.assertEqual(len(self.spoken), 2)
         self.assertIn("three decades", self.spoken[-1])
 
@@ -558,6 +584,17 @@ class ActsSessionTests(unittest.TestCase):
         self.assertTrue(self.session.answer_revealed)
         self.assertEqual(self.spoken, spoken_before_jump)
 
+    def test_on_to_slide_12_navigates_to_the_requested_slide(self):
+        self.session.start()
+        lesson_presentation._session = self.session
+        self.addCleanup(setattr, lesson_presentation, "_session", None)
+
+        handled = handle_active_command("On to slide 12", self.session.speak)
+
+        self.assertTrue(handled)
+        self.assertEqual(self.session.slide_index, 11)
+        self.assertEqual(self.slides.actions[-1], ("go_to", 11))
+
     def test_slide_number_words_are_supported_through_one_hundred(self):
         self.assertEqual(_parse_slide_number("four"), 4)
         self.assertEqual(_parse_slide_number("fourth"), 4)
@@ -572,7 +609,9 @@ class ActsSessionTests(unittest.TestCase):
         self.addCleanup(setattr, lesson_presentation, "_session", None)
         self.assertTrue(handle_active_command("show the 4th slide", self.session.speak))
         self.assertEqual(self.session.slide_index, 3)
-        self.assertFalse(handle_active_command("fourth slide please", self.session.speak))
+        self.assertFalse(
+            handle_active_command("fourth slide please", self.session.speak)
+        )
 
     def test_show_fifth_slide_restores_presentation_from_bible_display(self):
         self.session.start()
@@ -595,7 +634,9 @@ class ActsSessionTests(unittest.TestCase):
         self.session.start()
         lesson_presentation._session = self.session
         self.addCleanup(setattr, lesson_presentation, "_session", None)
-        self.assertTrue(handle_active_command("go to slide number two", self.session.speak))
+        self.assertTrue(
+            handle_active_command("go to slide number two", self.session.speak)
+        )
         self.assertEqual(len(self.spoken), 1)
         self.assertTrue(
             handle_active_command(
@@ -620,7 +661,9 @@ class ActsSessionTests(unittest.TestCase):
         self.session.start()
         lesson_presentation._session = self.session
         self.addCleanup(setattr, lesson_presentation, "_session", None)
-        self.assertTrue(handle_active_command("show question seven", self.session.speak))
+        self.assertTrue(
+            handle_active_command("show question seven", self.session.speak)
+        )
         self.assertEqual(self.slides.actions[-1], ("go_to", 13))
         self.assertEqual(self.session.slide_index, 13)
 
@@ -640,7 +683,9 @@ class ActsSessionTests(unittest.TestCase):
         lesson_presentation._session = self.session
         self.addCleanup(setattr, lesson_presentation, "_session", None)
         handle_active_command("go to slide 3", self.session.speak)
-        self.assertTrue(handle_active_command("show us the answers", self.session.speak))
+        self.assertTrue(
+            handle_active_command("show us the answers", self.session.speak)
+        )
         self.assertEqual(self.slides.actions[-2:], [("go_to", 3), "reveal"])
         self.assertEqual(self.slides.actions[-1], "reveal")
         self.assertEqual(self.session.slide_index, 3)
@@ -693,7 +738,7 @@ class ActsSessionTests(unittest.TestCase):
         self.assertEqual(len(self.spoken), spoken_before + 1)
         self.session.handle_keyboard_control("previous")
         self.assertEqual(self.session.slide_index, 0)
-        self.assertEqual(len(self.spoken), spoken_before + 2)
+        self.assertEqual(len(self.spoken), spoken_before + 1)
 
     def test_rapid_keyboard_navigation_discards_superseded_narration(self):
         first_speech_started = threading.Event()
@@ -787,7 +832,9 @@ class ActsSessionTests(unittest.TestCase):
         self.addCleanup(setattr, lesson_presentation, "_session", None)
         handle_active_command("go to slide number third", self.session.speak)
         spoken_before_reveal = list(self.spoken)
-        self.assertTrue(handle_active_command("display the answers", self.session.speak))
+        self.assertTrue(
+            handle_active_command("display the answers", self.session.speak)
+        )
         self.assertEqual(self.slides.actions[-2:], [("go_to", 3), "reveal"])
         self.assertEqual(self.slides.actions[-1], "reveal")
         self.assertEqual(self.session.slide_index, 3)
@@ -840,6 +887,7 @@ class CommonPresentationTests(unittest.TestCase):
         self.assertTrue(
             is_name_origin_request("Ezra, tell us where your name comes from")
         )
+        self.assertTrue(is_name_origin_request("tell me how you got your name"))
         self.assertTrue(is_name_origin_request("How did you get your name?"))
         self.assertTrue(is_name_origin_request("it is right howd you get your name"))
         self.assertTrue(is_name_origin_request("Why are you named Ezra?"))

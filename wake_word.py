@@ -1,11 +1,14 @@
 import contextlib
 import math
 import os
+import queue
 import threading
 import time
 from collections import deque
 
 import numpy as np
+import presentation_controls
+from wake_noise import WakeNoiseFloor
 import sounddevice as sd
 
 from service_watchdog import watchdog
@@ -74,22 +77,22 @@ from config import (
     SOUND_GAZE_AMBIENT_MIN_RMS,
     SOUND_GAZE_AMBIENT_MIN_SPEECH_SECONDS,
     SOUND_GAZE_AMBIENT_RESET_SILENCE_SECONDS,
+    SOUND_GAZE_REJECTION_LOG_INTERVAL_SECONDS,
     SOUND_GAZE_TEST_MODE,
     SOUND_GAZE_VERTICAL_POSITION,
 )
 from respeaker_io import (
     create_respeaker_or_raise,
     select_respeaker_recognition_channel,
+    set_respeaker_listening_led,
+    set_respeaker_wake_indicator,
 )
 
 from robot import eyelids
 from robot import eyes
 from robot import robot_emotions
 
-if (
-    ENABLE_HEAD_TRACKING
-    and not ENABLE_INTERACTION_DIAGNOSTIC
-):
+if ENABLE_HEAD_TRACKING and not ENABLE_INTERACTION_DIAGNOSTIC:
     from robot.head_tracking import head_tracker
 else:
     head_tracker = None
@@ -188,7 +191,20 @@ recent_buffer_idx = 0
 audio_buffer_len = 0
 recent_buffer_len = 0
 audio_ready = threading.Event()
+wake_audio_queue = queue.Queue(maxsize=64)
+wake_audio_overrun = threading.Event()
 _last_stream_status_log_at = 0.0
+
+
+def drain_wake_audio():
+    """Consume each queued microphone sample once, in capture order."""
+    chunks = []
+    while True:
+        try:
+            chunks.append(wake_audio_queue.get_nowait())
+        except queue.Empty:
+            break
+    return np.concatenate(chunks) if chunks else np.empty(0, dtype=np.float32)
 
 
 # =========================
@@ -202,6 +218,7 @@ _last_command_doa_diagnostic = None
 _last_wake_detected_at = None
 _last_command_speech_ended_at = None
 _last_command_capture_finished_at = None
+_last_sound_gaze_rejection_at = {}
 
 
 def get_last_command_doa():
@@ -233,9 +250,7 @@ def _mean_signed_doa(raw_angles):
     sin_sum = sum(math.sin(math.radians(angle)) for angle in raw_angles)
     cos_sum = sum(math.cos(math.radians(angle)) for angle in raw_angles)
     raw_mean = math.degrees(math.atan2(sin_sum, cos_sum)) % 360.0
-    relative = (
-        raw_mean - HEAD_TRACKING_MIC_FORWARD_AZIMUTH + 180.0
-    ) % 360.0 - 180.0
+    relative = (raw_mean - HEAD_TRACKING_MIC_FORWARD_AZIMUTH + 180.0) % 360.0 - 180.0
     return HEAD_TRACKING_DIRECTION * relative
 
 
@@ -270,9 +285,7 @@ def _qualify_command_doa(samples, stability_samples=None):
     if not samples or not stability_samples:
         return result
 
-    active_bearings = [
-        _mean_signed_doa([raw_angle]) for raw_angle, _ in samples
-    ]
+    active_bearings = [_mean_signed_doa([raw_angle]) for raw_angle, _ in samples]
     dominant_cluster = max(
         (
             [
@@ -348,6 +361,22 @@ def _qualify_command_doa(samples, stability_samples=None):
     return result
 
 
+def _log_sound_gaze_rejection(category, message):
+    if not VERBOSE_RUNTIME_LOGS:
+        return
+
+    now = time.monotonic()
+    last_logged_at = _last_sound_gaze_rejection_at.get(category)
+    if (
+        last_logged_at is not None
+        and now - last_logged_at < SOUND_GAZE_REJECTION_LOG_INTERVAL_SECONDS
+    ):
+        return
+
+    _last_sound_gaze_rejection_at[category] = now
+    print(message)
+
+
 def _look_toward_wake_sound(active_angles, settled_angles):
     """Hold an eye-only gaze toward a qualified front-facing speaker."""
     if not ENABLE_SOUND_GAZE:
@@ -363,12 +392,22 @@ def _look_toward_wake_sound(active_angles, settled_angles):
     bearing = result.get("angle")
 
     if not result["qualified"] or bearing is None:
-        if VERBOSE_RUNTIME_LOGS:
-            print(f"👀 Sound gaze skipped: {result['reason']}")
+        reason = result["reason"]
+        category = (
+            "active DoA cluster"
+            if reason.startswith("active DoA cluster is")
+            else reason
+        )
+        _log_sound_gaze_rejection(
+            category,
+            f"👀 Sound gaze skipped: {reason}",
+        )
         return False
     if abs(bearing) > SOUND_GAZE_MAX_BEARING_DEGREES:
-        if VERBOSE_RUNTIME_LOGS:
-            print(f"👀 Sound gaze ignored rear bearing {bearing:+.1f}°")
+        _log_sound_gaze_rejection(
+            "rear bearing",
+            f"👀 Sound gaze ignored rear bearing {bearing:+.1f}°",
+        )
         return False
 
     fraction = bearing / SOUND_GAZE_MAX_BEARING_DEGREES
@@ -378,10 +417,7 @@ def _look_toward_wake_sound(active_angles, settled_angles):
     )
     horizontal = 90.0 + curved_fraction * SOUND_GAZE_MAX_EYE_OFFSET
     robot_emotions.set_external_gaze(horizontal, SOUND_GAZE_VERTICAL_POSITION)
-    print(
-        f"👀 Looking toward speaker {bearing:+.1f}° "
-        f"(eye gaze {horizontal:.1f})"
-    )
+    print(f"👀 Looking toward speaker {bearing:+.1f}° " f"(eye gaze {horizontal:.1f})")
     return True
 
 
@@ -399,6 +435,8 @@ def reset_idle_timer():
 
 
 def enter_sleep():
+    global sleeping
+    sleeping = True
     print("\n😴 Ezra sleeping")
 
     # Finish background face movement before setting the final sleep pose.
@@ -428,7 +466,13 @@ def enter_sleep():
         print(f"Sleep error: {e}")
 
 
+def is_sleeping():
+    return sleeping
+
+
 def wake_up():
+    global sleeping
+    sleeping = False
     print("\n😊 Ezra waking up")
 
     try:
@@ -437,6 +481,11 @@ def wake_up():
 
     except Exception as e:
         print(f"Wake error: {e}")
+
+
+def wake_if_sleeping():
+    if sleeping:
+        wake_up()
 
 
 # =========================
@@ -469,6 +518,10 @@ def audio_callback(indata, frames, time_info, status):
             _last_stream_status_log_at = now
 
     audio = select_respeaker_recognition_channel(indata)[:, 0]
+    try:
+        wake_audio_queue.put_nowait(audio.copy())
+    except queue.Full:
+        wake_audio_overrun.set()
     n_samples = len(audio)
 
     # Circular buffer fill for audio_buffer
@@ -602,6 +655,7 @@ def run(return_audio=False):
 
     history = deque(maxlen=4)
     rms_history = deque(maxlen=4)
+    noise_floor = WakeNoiseFloor(WAKE_MIN_RMS_THRESHOLD)
     stop_history = deque(maxlen=STOP_GUARD_HITS)
 
     audio_buffer = np.zeros(
@@ -620,12 +674,10 @@ def run(return_audio=False):
     recent_buffer_len = 0
 
     # Flush stale OpenWakeWord features from the previous detection.
-    flush_audio = np.zeros(
-        SAMPLE_RATE,
-        dtype=np.int16,
-    )
-
-    model.predict(flush_audio)
+    model.reset()
+    drain_wake_audio()
+    wake_audio_overrun.clear()
+    audio_ready.clear()
 
     wake_direction_history = deque(
         maxlen=max(
@@ -639,9 +691,7 @@ def run(return_audio=False):
     ambient_gaze_angles = deque(
         maxlen=max(
             1,
-            round(
-                1.5 / HEAD_TRACKING_SAMPLE_INTERVAL_SECONDS
-            ),
+            round(1.5 / HEAD_TRACKING_SAMPLE_INTERVAL_SECONDS),
         )
     )
     ambient_last_speech_at = None
@@ -668,6 +718,8 @@ def run(return_audio=False):
         global _last_command_speech_ended_at, _last_command_capture_finished_at
         _last_command_doa = None
         _last_command_doa_diagnostic = None
+        if head_tracker is not None:
+            head_tracker.remember_command_bearing(None)
 
         def finish_capture(result, speech_ended_at=None):
             global _last_command_speech_ended_at
@@ -702,6 +754,8 @@ def run(return_audio=False):
             if head_tracker is None:
                 return
 
+            head_tracker.remember_command_bearing(_last_command_doa)
+
             # Move only after capture is complete so servo noise cannot enter
             # the follow-on recording. Prefer qualified live command direction.
             if live_command_doa_samples:
@@ -710,6 +764,7 @@ def run(return_audio=False):
                     stability_doa_samples,
                 )
                 if command_result["qualified"]:
+                    head_tracker.remember_command_bearing(command_result["angle"])
                     head_tracker.turn_toward_bearing(
                         command_result["angle"],
                         source="command",
@@ -729,9 +784,9 @@ def run(return_audio=False):
                 )
             else:
                 print(
-                    "👂 Wake-only direction uncertain; "
-                    "waiting for follow-up speech"
+                    "👂 Wake-only direction uncertain; " "waiting for follow-up speech"
                 )
+
         seed_tail_rms = 0.0
         seed_arr = None
 
@@ -757,6 +812,11 @@ def run(return_audio=False):
                 print(f"🎤 Seed tail active (rms={seed_tail_rms:.4f})")
 
         while True:
+            listening_status = sync_listening_led()
+            if presentation_controls.pending():
+                return finish_capture(None)
+            if not listening_status[0]:
+                return finish_capture(None)
             time.sleep(0.02)
 
             current_idx = recent_buffer_idx
@@ -775,10 +835,7 @@ def run(return_audio=False):
             if new_chunk.size > 0:
                 try:
                     doa = mic.read("DOA_VALUE")
-                    if (
-                        len(doa) == 2
-                        and not robot_emotions.is_doa_suppressed()
-                    ):
+                    if len(doa) == 2 and not robot_emotions.is_doa_suppressed():
                         # The callback delivers audio in blocks, not at the
                         # polling interval. Count the captured audio duration
                         # so short commands retain their full speech evidence.
@@ -836,10 +893,7 @@ def run(return_audio=False):
                 break
 
             if now - start_time >= MAX_COMMAND_TIME:
-                print(
-                    "⚠️ Maximum command time reached — "
-                    "discarding timed-out audio"
-                )
+                print("⚠️ Maximum command time reached — " "discarding timed-out audio")
                 result = finish_capture(None, last_active_monotonic)
                 finish_command_direction()
                 return result
@@ -867,15 +921,59 @@ def run(return_audio=False):
     print("\n👂 Listening for wake words...\n")
 
     stream = open_microphone()
+    last_listening_status = presentation_controls.listening_status()
+    last_led_status = None
+
+    def sync_listening_led():
+        nonlocal last_led_status
+        listening_status = presentation_controls.listening_status()
+        if listening_status != last_led_status:
+            try:
+                set_respeaker_listening_led(mic, listening_status[0])
+            except Exception as error:
+                print(f"⚠️ ReSpeaker LED update failed: {error}")
+            last_led_status = listening_status
+        return listening_status
 
     try:
+        sync_listening_led()
         while True:
             # Run wake-word inference once per fresh microphone block. Without
             # this gate the loop repeatedly infers on identical audio and can
             # starve PortAudio's Python callback, causing input overflows.
+            if presentation_controls.pending():
+                return (None, None) if return_audio else None
             if not audio_ready.wait(timeout=0.25):
                 continue
             audio_ready.clear()
+            fresh_audio = drain_wake_audio()
+            if wake_audio_overrun.is_set():
+                # A gap invalidates the model's feature history and hit count.
+                wake_audio_overrun.clear()
+                model.reset()
+                history.clear()
+                rms_history.clear()
+                noise_floor = WakeNoiseFloor(WAKE_MIN_RMS_THRESHOLD)
+                pending_wake = False
+                print("⚠️ Wake audio overrun; rearming with fresh audio")
+                continue
+            if not fresh_audio.size:
+                continue
+
+            listening_status = sync_listening_led()
+            listening_enabled = listening_status[0]
+            if listening_status != last_listening_status:
+                model.reset()
+                history.clear()
+                rms_history.clear()
+                stop_history.clear()
+                noise_floor = WakeNoiseFloor(WAKE_MIN_RMS_THRESHOLD)
+                pending_wake = False
+                armed = True
+                low_volume_candidate_logged = False
+                last_listening_status = listening_status
+            if not listening_enabled:
+                continue
 
             current_time = time.time()
 
@@ -919,6 +1017,8 @@ def run(return_audio=False):
                             recover=True,
                             reset_first=True,
                         )
+                        last_led_status = None
+                        sync_listening_led()
                         print("✅ ReSpeaker control interface reconnected")
                         last_respeaker_error_at = 0.0
                     except Exception:
@@ -927,32 +1027,23 @@ def run(return_audio=False):
             # Always run OpenWakeWord, even if the ReSpeaker VAD
             # does not recognize quiet speech.
             audio_int16 = np.clip(
-                audio_buffer * 32767,
+                fresh_audio * 32767,
                 -32768,
                 32767,
             ).astype(np.int16)
 
             rms = float(np.sqrt(np.mean(audio_buffer**2)))
 
-            if (
-                ENABLE_SOUND_GAZE
-                and not ENABLE_FACE_MOTION_DIAGNOSTIC
-                and not sleeping
-            ):
+            if ENABLE_SOUND_GAZE and not ENABLE_FACE_MOTION_DIAGNOSTIC and not sleeping:
                 if robot_emotions.is_sound_gaze_suppressed():
                     ambient_gaze_angles.clear()
                     ambient_last_speech_at = None
-                elif (
-                    angle is not None
-                    and speech
-                    and rms >= SOUND_GAZE_AMBIENT_MIN_RMS
-                ):
+                elif angle is not None and speech and rms >= SOUND_GAZE_AMBIENT_MIN_RMS:
                     ambient_gaze_angles.append(float(angle))
                     ambient_last_speech_at = current_time
 
                     active_seconds = (
-                        len(ambient_gaze_angles)
-                        * HEAD_TRACKING_SAMPLE_INTERVAL_SECONDS
+                        len(ambient_gaze_angles) * HEAD_TRACKING_SAMPLE_INTERVAL_SECONDS
                     )
                     if (
                         active_seconds >= SOUND_GAZE_AMBIENT_MIN_SPEECH_SECONDS
@@ -990,11 +1081,7 @@ def run(return_audio=False):
                     ambient_gaze_until = 0.0
 
             if (
-                (
-                    head_tracker is not None
-                    or ENABLE_DOA_DIAGNOSTIC
-                    or ENABLE_SOUND_GAZE
-                )
+                (head_tracker is not None or ENABLE_DOA_DIAGNOSTIC or ENABLE_SOUND_GAZE)
                 and angle is not None
                 and speech
                 and rms >= ACTIVE_RMS_THRESHOLD
@@ -1039,7 +1126,12 @@ def run(return_audio=False):
             wake_score = max(ezra_combined, hey_ezra_score)
 
             history.append(wake_score)
-            rms_history.append(rms)
+            # Compare fresh microphone blocks against their ambient level;
+            # the one-second ring buffer smooths away spoken onset changes.
+            fresh_rms = float(np.sqrt(np.mean(fresh_audio**2)))
+            noise_floor.observe(time.monotonic(), fresh_rms)
+            required_wake_rms = noise_floor.required_rms()
+            rms_history.append(fresh_rms)
             peak_score = max(history)
             recent_peak_rms = max(rms_history)
             wake_score_hits = sum(score >= THRESHOLD for score in history)
@@ -1059,7 +1151,7 @@ def run(return_audio=False):
             if (
                 peak_score >= THRESHOLD
                 and wake_score_hits >= WAKE_MIN_SCORE_HITS
-                and recent_peak_rms >= WAKE_MIN_RMS_THRESHOLD
+                and recent_peak_rms >= required_wake_rms
                 and armed
                 and not pending_wake
             ):
@@ -1068,10 +1160,15 @@ def run(return_audio=False):
                 pending_phrase = detected_phrase
                 _last_wake_detected_at = time.monotonic()
                 low_volume_candidate_logged = False
+                print(
+                    f"🎤 Wake candidate: score={peak_score:.3f}, "
+                    f"hits={wake_score_hits}, peak_rms={recent_peak_rms:.4f}, "
+                    f"required_rms={required_wake_rms:.4f}"
+                )
             elif (
                 peak_score >= THRESHOLD
                 and wake_score_hits >= WAKE_MIN_SCORE_HITS
-                and recent_peak_rms < WAKE_MIN_RMS_THRESHOLD
+                and recent_peak_rms < required_wake_rms
                 and armed
                 and not pending_wake
                 and not low_volume_candidate_logged
@@ -1081,7 +1178,7 @@ def run(return_audio=False):
                         "🔇 Ignoring quiet wake candidate: "
                         f"score={peak_score:.3f}, "
                         f"peak_rms={recent_peak_rms:.4f}, "
-                        f"minimum={WAKE_MIN_RMS_THRESHOLD:.4f}"
+                        f"minimum={required_wake_rms:.4f}"
                     )
                 low_volume_candidate_logged = True
             elif peak_score < THRESHOLD:
@@ -1123,9 +1220,12 @@ def run(return_audio=False):
                     # ends. Preserve those final readings instead of freezing
                     # the earlier angle from the model-detection instant.
                     post_wake_started_at = time.monotonic()
-                    history_cutoff = time.monotonic() - HEAD_TRACKING_WAKE_HISTORY_SECONDS
+                    history_cutoff = (
+                        time.monotonic() - HEAD_TRACKING_WAKE_HISTORY_SECONDS
+                    )
                     active_wake_angles = [
-                        angle for sampled_at, angle in wake_direction_history
+                        angle
+                        for sampled_at, angle in wake_direction_history
                         if sampled_at >= history_cutoff
                     ]
                     settled_wake_angles = []
@@ -1146,10 +1246,7 @@ def run(return_audio=False):
                             # while also extending active speech evidence.
                             if not robot_emotions.is_doa_suppressed():
                                 settled_wake_angles.append(float(doa[0]))
-                            if (
-                                bool(doa[1])
-                                and not robot_emotions.is_doa_suppressed()
-                            ):
+                            if bool(doa[1]) and not robot_emotions.is_doa_suppressed():
                                 active_wake_angles.append(float(doa[0]))
                         except Exception as e:
                             print(f"⚠️ Wake direction settle error: {e}")
@@ -1167,9 +1264,7 @@ def run(return_audio=False):
                         except Exception as e:
                             print(f"⚠️ Head tracking movement error: {e}")
 
-                    post_wake_until = (
-                        post_wake_started_at + post_wake_audio_seconds
-                    )
+                    post_wake_until = post_wake_started_at + post_wake_audio_seconds
                     while time.monotonic() < post_wake_until:
                         try:
                             doa = mic.read("DOA_VALUE")
@@ -1178,15 +1273,22 @@ def run(return_audio=False):
                                     "Expected (angle, speech) DOA_VALUE response, "
                                     f"received: {doa!r}"
                                 )
-                            if (
-                                bool(doa[1])
-                                and not robot_emotions.is_doa_suppressed()
-                            ):
+                            if bool(doa[1]) and not robot_emotions.is_doa_suppressed():
                                 settled_wake_angles.append(float(doa[0]))
                                 active_wake_angles.append(float(doa[0]))
                         except Exception as e:
                             print(f"⚠️ Post-wake direction read error: {e}")
                         time.sleep(HEAD_TRACKING_SAMPLE_INTERVAL_SECONDS)
+
+                    if presentation_controls.listening_enabled():
+                        try:
+                            wake_bearing = _mean_signed_doa(
+                                active_wake_angles + settled_wake_angles
+                            )
+                            if wake_bearing is not None:
+                                set_respeaker_wake_indicator(mic, wake_bearing)
+                        except Exception as error:
+                            print(f"⚠️ ReSpeaker wake LED update failed: {error}")
 
                     # Include a small pre-detection span plus post-wake span so
                     # continuous speech like "ezra what time..." keeps the first word.
@@ -1232,8 +1334,15 @@ def run(return_audio=False):
                                 active_wake_angles,
                                 settled_wake_angles,
                             )
+                            if (
+                                presentation_controls.pending()
+                                or not presentation_controls.listening_enabled()
+                            ):
+                                return None, None
                             return phrase, command_audio
 
+                        if not presentation_controls.listening_enabled():
+                            return (None, None) if return_audio else None
                         return phrase, wake_audio
 
                     return phrase
@@ -1257,6 +1366,14 @@ def run(return_audio=False):
             stream.close()
         except Exception:
             pass
+
+        try:
+            set_respeaker_listening_led(
+                mic,
+                presentation_controls.listening_enabled(),
+            )
+        except Exception as error:
+            print(f"⚠️ ReSpeaker listening LED restore failed: {error}")
 
         # Give ALSA time to release device 1 before Listen opens it.
         time.sleep(MIC_RELEASE_DELAY)

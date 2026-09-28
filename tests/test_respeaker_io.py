@@ -68,6 +68,48 @@ class ReSpeakerRecoveryTests(unittest.TestCase):
             np.array([[1.0], [3.0]], dtype=np.float32),
         )
 
+    def test_listening_led_uses_direction_of_arrival_effect(self):
+        mic = Mock()
+
+        respeaker_io.set_respeaker_listening_led(mic, True)
+
+        mic.write.assert_called_once_with("LED_EFFECT", [4])
+
+    def test_listening_led_turns_ring_off_when_disabled(self):
+        mic = Mock()
+
+        respeaker_io.set_respeaker_listening_led(mic, False)
+
+        mic.write.assert_called_once_with("LED_EFFECT", [0])
+
+    def test_wake_indicator_lights_three_blue_leds_at_front(self):
+        mic = Mock()
+
+        respeaker_io.set_respeaker_wake_indicator(mic, 0.0)
+
+        ring_colors = mic.write.call_args_list[0].args[1]
+        self.assertEqual(ring_colors.count(0x0000FF), 3)
+        self.assertEqual(ring_colors.count(0), 9)
+        self.assertEqual(ring_colors[0], 0x0000FF)
+        self.assertEqual(ring_colors[1], 0x0000FF)
+        self.assertEqual(ring_colors[-1], 0x0000FF)
+        mic.write.assert_has_calls(
+            [
+                unittest.mock.call("LED_RING_COLOR", ring_colors),
+                unittest.mock.call("LED_EFFECT", [5]),
+            ]
+        )
+
+    def test_wake_indicator_wraps_at_ring_boundary(self):
+        mic = Mock()
+
+        respeaker_io.set_respeaker_wake_indicator(mic, -30.0)
+
+        ring_colors = mic.write.call_args_list[0].args[1]
+        self.assertEqual(ring_colors[11], 0x0000FF)
+        self.assertEqual(ring_colors[10], 0x0000FF)
+        self.assertEqual(ring_colors[0], 0x0000FF)
+
 
 if __name__ == "__main__":
     unittest.main()

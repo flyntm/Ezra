@@ -1,0 +1,289 @@
+.................................................................................................................................................................................................
+----------------------------------------------------------------------
+Ran 193 tests in 6.222s
+
+OK
+ℹ️ NIV unavailable; using WEB: offline
+ℹ️ NIV unavailable; using WEB: offline
+⚠️ Streamed speech delivery failed: disk unavailable
+👂 Listening for a follow-up command...
+👂 Follow-up ignored or canceled: thats all
+⏱️ No follow-up command — returning to standby
+👂 Listening for a follow-up command...
+👂 Follow-up ignored or canceled: never mind
+⏱️ No follow-up command — returning to standby
+👂 Listening for a follow-up command...
+👂 Follow-up ignored or canceled: stop
+⏱️ No follow-up command — returning to standby
+👂 Listening for a follow-up command...
+👂 Follow-up ignored or canceled: pfft
+⏱️ No follow-up command — returning to standby
+👂 Listening for a follow-up command...
+⏱️ No follow-up command — returning to standby
+👂 Listening for a follow-up command...
+👂 Follow-up command received: why
+👂 Listening for a follow-up command...
+👂 Follow-up command received: tell me more
+👂 Listening for a follow-up command...
+👂 Follow-up command received: why
+👂 Listening for a follow-up command...
+👂 Follow-up command received: why
+👂 Listening for a follow-up command...
+👂 Follow-up command received: why
+👂 Listening for a follow-up command...
+⏱️ No follow-up command — returning to standby
+👂 Turning toward command: +20.0° → +50.0°
+👂 Head holding still in presentation mode (speaker)
+👂 Head holding still in presentation mode (wake word)
+👂 Head holding still in presentation mode (command)
+👂 Head holding still in presentation mode (follow-up command)
+👂 Head holding still in presentation mode (wake word)
+[mode] general
+[mode] presentation
+[mode] general
+[mode] general
+[mode] general
+[mode] general
+[mode] general
+[mode] general
+[mode] general
+[mode] general
+[mode] general
+[mode] general
+[mode] general
+[mode] general
+[mode] general
+[mode] general
+[mode] general
+[mode] general
+[mode] general
+[mode] general
+[mode] general
+[mode] general
+[mode] general
+[mode] general
+[mode] general
+[mode] general
+[mode] general
+[mode] general
+[mode] general
+[mode] general
+[mode] general
+
+🛑 Received SIGTERM; stopping Ezra safely...
+🌐 Internet status: offline
+🌐 Internet status: online
+[mode] general
+[mode] general
+[mode] general
+[mode] general
+[mode] general
+[mode] general
+
+👂 Listening for wake words...
+
+[presentation] navigation_command=next resulting_slide=2
+[presentation] slide=2 automatic_advance=False
+[presentation] slide=2 speech_start
+[presentation] slide=2 speech_complete
+[presentation] navigation_command=next resulting_slide=2
+[presentation] navigation_command=next resulting_slide=3
+[presentation] navigation_command=next resulting_slide=4
+[presentation] slide=4 automatic_advance=False
+[presentation] slide=4 speech_start
+[presentation] slide=4 speech_complete
+[presentation] slide=1 automatic_advance=False
+[presentation] slide=1 speech_start
+[presentation] slide=1 speech_complete
+[presentation] slide=4 automatic_advance=False
+[presentation] slide=4 speech_start
+[presentation] slide=4 speech_complete
+[presentation] slide=1 automatic_advance=False
+[presentation] slide=1 speech_start
+[presentation] slide=1 speech_complete
+[presentation] slide=4 automatic_advance=False
+[presentation] slide=4 speech_start
+[presentation] slide=4 speech_complete
+[presentation] slide=1 automatic_advance=False
+[presentation] slide=1 speech_start
+[presentation] slide=1 speech_complete
+[presentation] slide=4 automatic_advance=False
+[presentation] slide=4 speech_start
+[presentation] slide=4 speech_complete
+[presentation] slide=1 automatic_advance=False
+[presentation] slide=1 speech_start
+[presentation] slide=1 speech_complete
+[presentation] slide=1 automatic_advance=False
+[presentation] slide=1 speech_start
+[presentation] slide=1 speech_complete
+[presentation] slide=1 automatic_advance=False
+[presentation] slide=1 speech_start
+[presentation] slide=1 speech_complete
+[presentation] slide=4 automatic_advance=False
+[presentation] slide=4 speech_start
+[presentation] slide=4 speech_complete
+[presentation] slide=1 automatic_advance=False
+[presentation] slide=1 speech_start
+[presentation] slide=1 speech_complete
+[presentation] slide=1 automatic_advance=False
+[presentation] slide=1 speech_start
+[presentation] slide=1 speech_complete
+[presentation] slide=1 automatic_advance=False
+[presentation] slide=1 speech_start
+[presentation] slide=1 speech_complete
+[presentation] slide=1 automatic_advance=False
+[presentation] slide=1 speech_start
+[presentation] slide=1 speech_complete
+[presentation] slide=2 automatic_advance=False
+[presentation] slide=2 speech_start
+[presentation] slide=2 speech_complete
+[presentation] slide=1 automatic_advance=False
+[presentation] slide=1 speech_start
+[presentation] slide=1 speech_complete
+[presentation] slide=1 automatic_advance=False
+[presentation] slide=1 speech_start
+[presentation] slide=1 speech_complete
+[presentation] slide=2 automatic_advance=False
+[presentation] slide=2 speech_start
+[presentation] slide=2 speech_complete
+[presentation] slide=1 automatic_advance=False
+[presentation] slide=1 speech_start
+[presentation] slide=1 speech_complete
+[presentation] slide=1 automatic_advance=False
+[presentation] slide=1 speech_start
+[presentation] slide=1 speech_complete
+[presentation] navigation_command=next resulting_slide=2
+[presentation] slide=2 automatic_advance=False
+[presentation] slide=2 speech_start
+[presentation] slide=2 speech_complete
+[presentation] navigation_command=previous resulting_slide=1
+[presentation] slide=1 automatic_advance=False
+[presentation] slide=1 speech_start
+[presentation] slide=1 speech_complete
+[presentation] navigation_command=next resulting_slide=2
+[presentation] slide=2 automatic_advance=False
+[presentation] slide=2 speech_start
+[presentation] navigation_command=next resulting_slide=3
+[presentation] navigation_command=next resulting_slide=4
+[presentation] slide=2 speech_interrupted=True presentation_active=True
+[presentation] narration_discarded=True reason=superseded_navigation
+[presentation] narration_discarded=True reason=superseded_navigation
+[presentation] slide=1 automatic_advance=True
+[presentation] slide=1 speech_start
+[presentation] slide=1 speech_complete
+[presentation] slide=1 advancement_command=next resulting_slide=2
+[presentation] slide=2 automatic_advance=False
+[presentation] slide=2 speech_start
+[presentation] slide=2 speech_complete
+[presentation] slide=1 automatic_advance=True
+[presentation] slide=1 speech_start
+[presentation] slide=1 advancement_command=none reason=playback_incomplete
+[presentation] navigation_command=next resulting_slide=2
+[presentation] slide=2 automatic_advance=False
+[presentation] slide=2 speech_start
+[presentation] slide=2 speech_complete
+[presentation] slide=1 automatic_advance=False
+[presentation] slide=1 speech_start
+[presentation] slide=1 speech_complete
+[presentation] navigation_command=next resulting_slide=2
+[presentation] slide=2 automatic_advance=False
+[presentation] slide=2 speech_start
+[presentation] slide=2 speech_complete
+[presentation] navigation_command=next resulting_slide=3
+[presentation] slide=3 automatic_advance=False
+[presentation] slide=3 speech_start
+[presentation] slide=3 speech_complete
+[presentation] navigation_command=next resulting_slide=4
+[presentation] slide=4 automatic_advance=False
+[presentation] slide=4 speech_start
+[presentation] slide=4 speech_complete
+[presentation] navigation_command=previous resulting_slide=3
+[presentation] slide=1 automatic_advance=False
+[presentation] slide=1 speech_start
+[presentation] slide=1 speech_complete
+[presentation] navigation_command=next resulting_slide=4
+[presentation] slide=4 automatic_advance=False
+[presentation] slide=4 speech_start
+[presentation] slide=4 speech_complete
+[presentation] slide=1 automatic_advance=False
+[presentation] slide=1 speech_start
+[presentation] slide=1 speech_complete
+[presentation] slide=1 automatic_advance=False
+[presentation] slide=1 speech_start
+[presentation] slide=1 speech_complete
+[presentation] slide=1 automatic_advance=False
+[presentation] slide=1 speech_start
+[presentation] slide=1 speech_complete
+[presentation] slide=4 automatic_advance=False
+[presentation] slide=4 speech_start
+[presentation] slide=4 speech_complete
+[presentation] slide=1 automatic_advance=False
+[presentation] slide=1 speech_start
+[presentation] slide=1 speech_complete
+[presentation] navigation_command=previous resulting_slide=2
+[presentation] slide=2 automatic_advance=False
+[presentation] slide=2 speech_start
+[presentation] slide=2 speech_complete
+[presentation] slide=1 automatic_advance=False
+[presentation] slide=1 speech_start
+[presentation] slide=1 speech_complete
+[presentation] navigation_command=previous resulting_slide=4
+[presentation] slide=1 automatic_advance=False
+[presentation] slide=1 speech_start
+[presentation] slide=1 speech_complete
+[presentation] slide=1 automatic_advance=False
+[presentation] slide=1 speech_start
+[presentation] slide=1 speech_complete
+[presentation] slide=9 automatic_advance=False
+[presentation] slide=9 speech_start
+[presentation] slide=9 speech_complete
+[presentation] slide=1 automatic_advance=False
+[presentation] slide=1 speech_start
+[presentation] slide=1 speech_complete
+[presentation] navigation_command=next resulting_slide=2
+[presentation] slide=2 automatic_advance=False
+[presentation] slide=2 speech_start
+[presentation] navigation_command=next resulting_slide=3
+[presentation] navigation_command=next resulting_slide=4
+[presentation] slide=2 speech_interrupted=True presentation_active=True
+[presentation] narration_discarded=True reason=superseded_navigation
+[presentation] slide=4 automatic_advance=False
+[presentation] slide=4 speech_start
+[presentation] slide=4 speech_complete
+[presentation] slide=1 automatic_advance=False
+[presentation] slide=1 speech_start
+[presentation] slide=1 speech_complete
+[presentation] slide=1 automatic_advance=False
+[presentation] slide=1 speech_start
+[presentation] slide=1 speech_complete
+[presentation] slide=1 automatic_advance=False
+[presentation] slide=1 speaker_notes=none
+[presentation] slide=1 automatic_advance=True
+[presentation] slide=1 speech_start
+[presentation] slide=1 speech_interrupted=True presentation_active=True
+[presentation] slide=1 automatic_advance=False
+[presentation] slide=1 speech_start
+[presentation] slide=1 speech_complete
+[presentation] slide=2 automatic_advance=False
+[presentation] slide=2 speech_start
+[presentation] slide=2 speech_complete
+[presentation] slide=5 automatic_advance=False
+[presentation] slide=5 speech_start
+[presentation] slide=5 speech_complete
+[mode] general
+[mode] general
+[mode] general
+[mode] general
+[mode] presentation
+[mode] general
+[mode] general
+[mode] general
+
+🛑 Shutting down Ezra...
+Shutdown cleanup error: browser unavailable
+♻️ ReSpeaker USB port reset; waiting for it to reconnect
+♻️ ReSpeaker USB port reset; waiting for it to reconnect
+Ezra: Hello.
+Ezra: A sentence about a robot. A sentence about a robot. A sentence about a robot. A sentence about a robot. A sentence about a robot. A sentence about a robot. A sentence about a robot. A sentence about a robot. A sentence about a robot. A sentence about a robot. A sentence about a robot. A sentence about a robot. A sentence about a robot. A sentence about a robot. A sentence about a robot. A sentence about a robot. A sentence about a robot. A sentence about a robot. A sentence about a robot. A sentence about a robot. A sentence about a robot. A sentence about a robot. A sentence about a robot. A sentence about a robot. A sentence about a robot. A sentence about a robot. A sentence about a robot. A sentence about a robot. A sentence about a robot. A sentence about a robot. A sentence about a robot. A sentence about a robot. A sentence about a robot. A sentence about a robot. A sentence about a robot.
+Ezra: Hello.
+Ezra: Hello.

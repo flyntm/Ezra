@@ -12,6 +12,7 @@ import tempfile
 import threading
 import time
 
+import speech_playback
 
 _display_lock = threading.Lock()
 _active_display = None
@@ -50,7 +51,7 @@ def render_passage_html(title, passage_text, verses=()):
 <html><head><meta charset="utf-8"><style>
 html,body{{margin:0;width:100%;min-height:100%;background:#101722;color:#f7f1df}}
 body{{font-family:Georgia,serif}}
-main{{box-sizing:border-box;width:min(92vw,1400px);margin:0 auto;padding:6vh 5vw 18vh}}
+main{{box-sizing:border-box;width:min(92vw,1400px);margin:0 auto;padding:6vh 5vw 50vh}}
 h1{{margin:0 0 3vh;color:#d8b66c;font-size:clamp(34px,4.5vw,72px);line-height:1.1}}
 p{{margin:0;font-size:clamp(25px,3vw,48px);line-height:1.42;white-space:pre-wrap}}
 sup{{color:#d8b66c;font-size:.52em;font-weight:bold;line-height:0;margin-right:.18em;vertical-align:super}}
@@ -58,12 +59,51 @@ sup{{color:#d8b66c;font-size:.52em;font-weight:bold;line-height:0;margin-right:.
 </style></head><body><main>
 <h1>{html.escape(title)}</h1><p>{passage_html}</p>
 </main><script>
+const passage=document.querySelector('p');
+const readingPosition=0.5;
+let readingSession=null;
+let manualScroll=false;
+addEventListener('keydown',event=>{{
+    if(event.key==='ArrowUp'||event.key==='ArrowDown'){{
+        event.preventDefault();
+        manualScroll=true;
+        const lineHeight=parseFloat(getComputedStyle(passage).lineHeight);
+        scrollBy({{top:(event.key==='ArrowDown'?1:-1)*lineHeight,behavior:'smooth'}});
+        return;
+    }}
+    if(event.key===' '){{
+        event.preventDefault();
+        if(!event.repeat)fetch('/pause',{{method:'POST'}}).catch(()=>{{}});
+    }}
+}});
 async function followReading(){{
   try{{
     const response=await fetch('/state',{{cache:'no-store'}});
     const state=await response.json();
+        if(readingSession!==state.reading_session){{
+            readingSession=state.reading_session;
+            manualScroll=false;
+        }}
+        if(state.scrolls.length){{
+            manualScroll=true;
+            for(const direction of state.scrolls){{
+                scrollBy(0,direction*innerHeight);
+            }}
+        }}
+        if(!state.auto_follow||manualScroll){{
+            setTimeout(followReading,100);
+            return;
+        }}
+    const bounds=passage.getBoundingClientRect();
+    const lineHeight=parseFloat(getComputedStyle(passage).lineHeight);
+    const readingY=bounds.top+scrollY+lineHeight/2+
+      Math.max(0,bounds.height-lineHeight)*state.progress;
+        if(readingY<=innerHeight*readingPosition){{
+            setTimeout(followReading,100);
+            return;
+        }}
     const maximum=Math.max(0,document.documentElement.scrollHeight-innerHeight);
-    scrollTo(0,maximum*state.progress);
+    scrollTo(0,Math.min(maximum,Math.max(0,readingY-innerHeight*readingPosition)));
   }}catch(error){{}}
   setTimeout(followReading,100);
 }}
@@ -72,7 +112,7 @@ followReading();
 
 
 class BibleDisplay:
-    def __init__(self, title, passage_text, verses=()):
+    def __init__(self, title, passage_text, verses=(), read_along=True):
         self.title = title
         self.passage_text = passage_text
         self.verses = tuple(verses)
@@ -82,12 +122,22 @@ class BibleDisplay:
         self.server = None
         self.server_thread = None
         self.reading_started_at = None
+        self.read_along = read_along
+        self.reading_session = 0
+        self.scroll_requests = []
+        self.scroll_lock = threading.Lock()
         self.reading_duration = max(5.0, len(passage_text.split()) / 2.6)
         self.reading_complete = False
+        self.reading_stopped_progress = None
+        self.reading_paused_progress = None
 
     def reading_progress(self):
         if self.reading_complete:
             return 1.0
+        if self.reading_stopped_progress is not None:
+            return self.reading_stopped_progress
+        if self.reading_paused_progress is not None:
+            return self.reading_paused_progress
         if self.reading_started_at is None:
             return 0.0
         elapsed = time.monotonic() - self.reading_started_at
@@ -95,7 +145,37 @@ class BibleDisplay:
 
     def begin_reading(self):
         self.reading_started_at = time.monotonic()
+        self.reading_session += 1
         self.reading_complete = False
+        self.reading_stopped_progress = None
+
+    def queue_scroll(self, direction):
+        if direction not in ("up", "down"):
+            raise ValueError("Scroll direction must be 'up' or 'down'")
+        with self.scroll_lock:
+            self.scroll_requests.append(-1 if direction == "up" else 1)
+
+    def take_scroll_requests(self):
+        with self.scroll_lock:
+            requests = self.scroll_requests
+            self.scroll_requests = []
+        return requests
+
+    def stop_reading(self):
+        """Freeze the passage at its current position when playback ends."""
+        self.reading_stopped_progress = self.reading_progress()
+
+    def toggle_reading(self):
+        """Pause or resume the visual reading position with speech."""
+        if self.reading_started_at is None or self.reading_complete:
+            return
+        if self.reading_paused_progress is None:
+            self.reading_paused_progress = self.reading_progress()
+        else:
+            self.reading_started_at = (
+                time.monotonic() - self.reading_paused_progress * self.reading_duration
+            )
+            self.reading_paused_progress = None
 
     def finish_reading(self):
         self.reading_complete = True
@@ -115,7 +195,15 @@ class BibleDisplay:
             def do_GET(self):
                 if self.path.startswith("/state"):
                     content = json.dumps(
-                        {"progress": passage_display.reading_progress()}
+                        {
+                            "progress": passage_display.reading_progress(),
+                            "auto_follow": (
+                                passage_display.read_along
+                                and passage_display.reading_started_at is not None
+                            ),
+                            "reading_session": passage_display.reading_session,
+                            "scrolls": passage_display.take_scroll_requests(),
+                        }
                     ).encode()
                     content_type = "application/json"
                 else:
@@ -127,6 +215,22 @@ class BibleDisplay:
                 self.send_header("Cache-Control", "no-store")
                 self.end_headers()
                 self.wfile.write(content)
+
+            def do_POST(self):
+                if self.path == "/pause":
+                    speech_playback.toggle()
+                    passage_display.toggle_reading()
+                    self.send_response(204)
+                    self.end_headers()
+                    return
+                if self.path in ("/scroll-up", "/scroll-down"):
+                    direction = "up" if self.path == "/scroll-up" else "down"
+                    passage_display.queue_scroll(direction)
+                    self.send_response(204)
+                    self.end_headers()
+                    return
+                self.send_response(404)
+                self.end_headers()
 
             def log_message(self, *_args):
                 pass
@@ -200,12 +304,12 @@ class BibleDisplay:
         self.browser_log = None
 
 
-def show_bible_passage(title, passage_text, verses=()):
+def show_bible_passage(title, passage_text, verses=(), read_along=True):
     """Show a passage until another visual replaces it or Ezra shuts down."""
 
     global _active_display
 
-    new_display = BibleDisplay(title, passage_text, verses)
+    new_display = BibleDisplay(title, passage_text, verses, read_along)
     new_display.start()
 
     with _display_lock:
@@ -216,6 +320,17 @@ def show_bible_passage(title, passage_text, verses=()):
         previous_display.close()
 
     return new_display
+
+
+def scroll_active_bible_display(direction):
+    """Queue a screen-sized scroll for the currently displayed passage."""
+
+    with _display_lock:
+        display = _active_display
+    if display is None:
+        return False
+    display.queue_scroll(direction)
+    return True
 
 
 def close_bible_display():

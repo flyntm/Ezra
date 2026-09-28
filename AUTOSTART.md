@@ -59,15 +59,26 @@ The service retries five seconds after an unexpected exit. A normal service
 stop sends `SIGTERM`, which Ezra handles through its existing robot cleanup
 path before exiting.
 
+The voice commands `quit`, `exit`, and `stop program` exit with status 90,
+which the service deliberately does not restart. Start Ezra again with
+`systemctl --user start ezra`. After updating `systemd/ezra.service`, reinstall
+the unit to apply its restart policy; restarting an older installed unit alone
+does not copy the updated file.
+
 The installer also grants Ezra permission to run one root-owned helper that
 resets only the ReSpeaker on USB port `1-2`. After repeated ReSpeaker control
 errors, Ezra rate-limits this reset to once per minute, waits for USB to
 re-enumerate, and reconnects automatically.
 
 The service also uses a 30-second health watchdog. Ezra withholds its heartbeat
-if microphone callbacks stop, command processing remains stuck for five
-minutes, or the presentation browser exits. Systemd then restarts Ezra, and an
+if microphone callbacks stop, busy work makes no observed progress for five
+minutes, or the presentation browser exits. Speech playback and slide completion
+renew that progress deadline, so a healthy long reading can continue. Systemd
+then restarts Ezra after a failure, and an
 active presentation is silently restored at its last displayed slide.
+
+Presentation state survives process errors and service restarts. Explicitly
+ending the presentation or quitting Ezra clears that state.
 
 If the microphone, speaker, or display is unavailable after boot, inspect the
 journal first. Also confirm the Pi reached the desktop and that `flyntm` was

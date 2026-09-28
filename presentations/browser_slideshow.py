@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import base64
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import mimetypes
 from pathlib import Path
 import html
 import json
@@ -15,8 +17,10 @@ import time
 import xml.etree.ElementTree as ET
 import zipfile
 
-from .powerpoint import PresentationError
+import speech_playback
+import presentation_controls
 
+from .powerpoint import PresentationError, ordered_slide_parts, part_relationships
 
 A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
 P = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
@@ -87,7 +91,9 @@ def _shape_html(shape, slide_width, slide_height):
     body_props = _first(body, f"{A}bodyPr")
     anchor = body_props.get("anchor", "t") if body_props is not None else "t"
     vertical = {"ctr": "center", "b": "flex-end"}.get(anchor, "flex-start")
-    styles.extend(("display:flex", "flex-direction:column", f"justify-content:{vertical}"))
+    styles.extend(
+        ("display:flex", "flex-direction:column", f"justify-content:{vertical}")
+    )
 
     paragraphs = []
     if body is not None:
@@ -103,12 +109,24 @@ def _shape_html(shape, slide_width, slide_height):
             for run in paragraph.findall(f"{A}r"):
                 run_props = _first(run, f"{A}rPr")
                 props_for_run = run_props if run_props is not None else default_run
-                size = _number(props_for_run, "sz", _number(default_run, "sz", 1800)) / 100
+                size = (
+                    _number(props_for_run, "sz", _number(default_run, "sz", 1800)) / 100
+                )
                 color = _color(props_for_run, _color(default_run, "#172C2B"))
-                weight = "700" if props_for_run is not None and props_for_run.get("b") == "1" else "400"
-                italic = "italic" if props_for_run is not None and props_for_run.get("i") == "1" else "normal"
+                weight = (
+                    "700"
+                    if props_for_run is not None and props_for_run.get("b") == "1"
+                    else "400"
+                )
+                italic = (
+                    "italic"
+                    if props_for_run is not None and props_for_run.get("i") == "1"
+                    else "normal"
+                )
                 text_node = _first(run, f"{A}t")
-                text = html.escape(text_node.text or "") if text_node is not None else ""
+                text = (
+                    html.escape(text_node.text or "") if text_node is not None else ""
+                )
                 runs.append(
                     f'<span style="font-size:{size * 96 / 72:.2f}px;color:{color};'
                     f'font-weight:{weight};font-style:{italic}">{text}</span>'
@@ -128,6 +146,49 @@ def _shape_html(shape, slide_width, slide_height):
     )
 
 
+def _picture_html(picture, slide_width, slide_height, package, relationships):
+    properties = _first(picture, f"{P}spPr")
+    transform = _first(properties, f"{A}xfrm")
+    offset = _first(transform, f"{A}off")
+    extent = _first(transform, f"{A}ext")
+    blip = _first(_first(picture, f"{P}blipFill"), f"{A}blip")
+    if offset is None or extent is None or blip is None:
+        return ""
+
+    relationship_id = blip.get(
+        "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed"
+    )
+    relationship = relationships.get(relationship_id)
+    if relationship is None or not relationship[0].endswith("/image"):
+        return ""
+    image_path = relationship[1]
+    try:
+        image_data = package.read(image_path)
+    except KeyError:
+        return ""
+    content_type = mimetypes.guess_type(image_path)[0]
+    if not content_type or not content_type.startswith("image/"):
+        return ""
+
+    x = _number(offset, "x") / slide_width * STAGE_WIDTH
+    y = _number(offset, "y") / slide_height * STAGE_HEIGHT
+    width = _number(extent, "cx") / slide_width * STAGE_WIDTH
+    height = _number(extent, "cy") / slide_height * STAGE_HEIGHT
+    identity = _first(_first(picture, f"{P}nvPicPr"), f"{P}cNvPr")
+    name = identity.get("name", "") if identity is not None else "Picture"
+    description = identity.get("descr", name) if identity is not None else name
+    reveal = name.startswith("answer-")
+    classes = "picture reveal" if reveal else "picture"
+    source = base64.b64encode(image_data).decode("ascii")
+    return (
+        f'<img class="{classes}" data-name="{html.escape(name, quote=True)}" '
+        f'alt="{html.escape(description, quote=True)}" draggable="false" '
+        f'src="data:{content_type};base64,{source}" '
+        f'style="left:{x:.3f}px;top:{y:.3f}px;width:{width:.3f}px;'
+        f'height:{height:.3f}px;object-fit:cover">'
+    )
+
+
 def render_pptx_html(deck_path):
     """Return one self-contained HTML document rendered from a pptx."""
 
@@ -139,22 +200,29 @@ def render_pptx_html(deck_path):
         if not slide_width or not slide_height:
             raise PresentationError("The PowerPoint file has no slide dimensions")
 
-        slide_names = sorted(
-            (
-                name
-                for name in package.namelist()
-                if name.startswith("ppt/slides/slide") and name.endswith(".xml")
-            ),
-            key=lambda name: int(Path(name).stem.removeprefix("slide")),
-        )
+        slide_names = ordered_slide_parts(package)
         slides = []
         for index, name in enumerate(slide_names):
             root = ET.fromstring(package.read(name))
-            background = _color(_first(_first(root, f"{P}cSld/{P}bg"), f"{P}bgPr"), "#fff")
+            background = _color(
+                _first(_first(root, f"{P}cSld/{P}bg"), f"{P}bgPr"), "#fff"
+            )
             tree = _first(root, f"{P}cSld/{P}spTree")
+            relationships = part_relationships(package, name)
             shapes = "".join(
-                _shape_html(shape, slide_width, slide_height)
-                for shape in tree.findall(f"{P}sp")
+                (
+                    _shape_html(element, slide_width, slide_height)
+                    if element.tag == f"{P}sp"
+                    else _picture_html(
+                        element,
+                        slide_width,
+                        slide_height,
+                        package,
+                        relationships,
+                    )
+                )
+                for element in tree
+                if element.tag in (f"{P}sp", f"{P}pic")
             )
             slides.append(
                 f'<section class="slide" data-slide="{index}" style="background:{background}">{shapes}</section>'
@@ -165,15 +233,20 @@ def render_pptx_html(deck_path):
 <style>
 html,body{{margin:0;width:100%;height:100%;overflow:hidden;background:#000;font-family:Calibri,Aptos,Arial,sans-serif}}
 #viewport{{position:absolute;left:50%;top:50%;width:{STAGE_WIDTH}px;height:{STAGE_HEIGHT}px;transform-origin:center center}}
+#listen-status{{display:none;position:fixed;top:24px;right:24px;z-index:10;padding:10px 16px;background:#172c2b;color:#fff;font:600 18px Calibri,Aptos,Arial,sans-serif}}
+#listen-status.visible{{display:block}}
 .slide{{display:none;position:absolute;inset:0;overflow:hidden}}
 .slide.active{{display:block}}
 .shape{{position:absolute;box-sizing:border-box;overflow:hidden}}
+.picture{{position:absolute;display:block;max-width:none}}
 .paragraph{{width:100%;line-height:1.15;white-space:pre-wrap}}
 .reveal{{opacity:0;transform:translateY(10px);transition:opacity .35s ease,transform .35s ease}}
 body.revealed .reveal{{opacity:1;transform:none}}
-</style></head><body><main id="viewport">{"".join(slides)}</main>
+</style></head><body><div id="listen-status" role="status" aria-live="polite"></div><main id="viewport">{"".join(slides)}</main>
 <script>
 const viewport=document.getElementById('viewport');
+let listenStatusTimer;
+function showListeningStatus(listening){{const status=document.getElementById('listen-status');status.textContent=listening?'Wake listening on':'Wake listening off';status.classList.add('visible');clearTimeout(listenStatusTimer);listenStatusTimer=setTimeout(()=>status.classList.remove('visible'),2200);}}
 function fit(){{const scale=Math.min(innerWidth/{STAGE_WIDTH},innerHeight/{STAGE_HEIGHT});viewport.style.transform=`translate(-50%,-50%) scale(${{scale}})`;}}
 addEventListener('resize',fit);fit();
 // PowerPoint lays text out using Calibri metrics. Chromium may substitute a
@@ -199,10 +272,12 @@ let slideNumber='';
 let slideNumberTimer;
 function rememberDigit(digit){{slideNumber+=digit;clearTimeout(slideNumberTimer);slideNumberTimer=setTimeout(()=>{{slideNumber='';}},5000);}}
 addEventListener('keydown',event=>{{
+    if(event.key.toLowerCase()==='w'&&!event.ctrlKey&&!event.altKey&&!event.metaKey){{event.preventDefault();if(!event.repeat)fetch('/listen-toggle',{{method:'POST'}}).then(response=>response.json()).then(state=>showListeningStatus(state.listening)).catch(()=>{{}});return;}}
   if(/^\d$/.test(event.key)){{event.preventDefault();rememberDigit(event.key);return;}}
   if(event.key==='Backspace'&&slideNumber){{event.preventDefault();slideNumber=slideNumber.slice(0,-1);return;}}
   if(event.key==='Enter'){{event.preventDefault();const target=slideNumber;slideNumber='';clearTimeout(slideNumberTimer);const path=target?`/control/go-to/${{target}}`:'/control/narrate';fetch(path,{{method:'POST'}}).catch(()=>{{}});return;}}
-  if(event.key==='Escape'||event.key===' '){{event.preventDefault();slideNumber='';clearTimeout(slideNumberTimer);fetch('/skip',{{method:'POST'}}).catch(()=>{{}});return;}}
+  if(event.key===' '){{event.preventDefault();if(!event.repeat)fetch('/pause',{{method:'POST'}}).catch(()=>{{}});return;}}
+  if(event.key==='Escape'){{event.preventDefault();slideNumber='';clearTimeout(slideNumberTimer);fetch('/skip',{{method:'POST'}}).catch(()=>{{}});return;}}
   const action=controls[event.key];
   if(action){{event.preventDefault();fetch(`/control/${{action}}`,{{method:'POST'}}).catch(()=>{{}});}}
 }});
@@ -256,6 +331,21 @@ class BrowserSlideshow:
                 self.wfile.write(content)
 
             def do_POST(self):
+                if self.path == "/listen-toggle":
+                    content = json.dumps(
+                        {"listening": presentation_controls.toggle_listening()}
+                    ).encode()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(content)))
+                    self.end_headers()
+                    self.wfile.write(content)
+                    return
+                if self.path == "/pause":
+                    speech_playback.toggle()
+                    self.send_response(204)
+                    self.end_headers()
+                    return
                 if self.path.startswith("/skip"):
                     slideshow.skip_event.set()
                     if slideshow.control_handler:
@@ -276,11 +366,7 @@ class BrowserSlideshow:
                     if valid_action and slideshow.control_handler:
                         slideshow.skip_event.set()
                         # Do not hold the browser request open while narration runs.
-                        threading.Thread(
-                            target=slideshow.control_handler,
-                            args=(action,),
-                            daemon=True,
-                        ).start()
+                        slideshow.control_handler(action)
                         self.send_response(202)
                         self.end_headers()
                         return

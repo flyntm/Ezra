@@ -3,5 +3,17 @@
   "python.terminal.activateEnvironment": true,
   "python.analysis.extraPaths": [
     "/home/flyntm/reSpeaker_XVF3800_USB_4MIC_ARRAY/python_control"
-  ]
+],
+"chat.tools.terminal.autoApprove": {
+    "/^source ezra311-env/bin/activate && python -m unittest tests\\.test_presentations\\.CommonPresentationTests\\.test_name_origin_command_patterns$/": {
+        "approve": true,
+        "matchCommandLine": true
+    },
+    "/^source ezra311-env/bin/activate && python -m unittest tests\\.test_presentations$/": {
+        "approve": true,
+        "matchCommandLine": true
+    },
+    "ezra-restart": true,
+    ".": true
+}
 }

@@ -4,6 +4,12 @@ import signal
 
 import state
 
+INTENTIONAL_EXIT_STATUS = 90
+
+
+def exit_status():
+    return INTENTIONAL_EXIT_STATUS if state.exit_requested else 0
+
 
 def startup_announcement(resuming_presentation=False):
     """Return the recovery greeting when startup will restore a presentation."""

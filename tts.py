@@ -7,6 +7,7 @@ from pathlib import Path
 import random
 import re
 import select
+import signal
 import subprocess
 import sys
 import termios
@@ -21,17 +22,21 @@ import sounddevice as sd
 from config import *
 from ezra_emotion import set_emotion, set_talk_level, set_temporary_emotion
 from mouth_sync import build_mouth_envelope
-from persistent_piper import PersistentPiper
+from persistent_piper import PersistentPiper, SynthesisCancelled, run_once
+from functools import wraps
 from respeaker_io import (
     create_respeaker_or_raise,
     select_respeaker_recognition_channel,
 )
 import state
+import speech_playback
+from service_watchdog import watchdog
 from command_timing import (
     note_speech_finished,
     note_speech_requested,
     note_speech_started,
 )
+from tts_pronunciation import apply_pronunciation_overrides
 
 
 @contextlib.contextmanager
@@ -55,15 +60,39 @@ _stop_mic = None
 _speech_cache = {}
 _evdev_warning_shown = False
 _persistent_piper = PersistentPiper(PIPER_PATH, TTS_MODEL_PATH)
+_speech_lock = threading.RLock()
+_active_speech_stop_event = None
+
+
+def cancel_speech():
+    """Release synthesis/playback waits before application cleanup."""
+    event = _active_speech_stop_event
+    if event is not None:
+        event.set()
+
+
+def wait_for_speech(timeout=3.0):
+    acquired = _speech_lock.acquire(timeout=timeout)
+    if acquired:
+        _speech_lock.release()
+    return acquired
+
+
+def _serialized_speech(function):
+    @wraps(function)
+    def wrapped(*args, **kwargs):
+        with _speech_lock:
+            return function(*args, **kwargs)
+
+    return wrapped
 
 
 def _monitor_presentation_skip(
     stop_event,
     skip_event,
     ready_event,
-    allow_space=False,
 ):
-    """Treat Escape, and optionally Space, as a speech interruption."""
+    """Escape stops speech; Space pauses or resumes it."""
     if not sys.stdin.isatty():
         ready_event.set()
         return
@@ -83,9 +112,10 @@ def _monitor_presentation_skip(
             readable, _, _ = select.select([fd], [], [], 0.1)
             if readable:
                 key = os.read(fd, 1)
-                if key == b"\x1b" or (allow_space and key == b" "):
-                    key_name = "escape" if key == b"\x1b" else "space"
-                    print(f"[presentation] keyboard_skip={key_name}")
+                if key == b" ":
+                    speech_playback.toggle()
+                if key == b"\x1b":
+                    print("[presentation] keyboard_skip=escape")
                     skip_event.set()
                     stop_event.set()
                     return
@@ -145,6 +175,12 @@ def _monitor_linux_escape(stop_event, skip_event):
                 for event in device.read():
                     if (
                         event.type == ecodes.EV_KEY
+                        and event.code == ecodes.KEY_SPACE
+                        and event.value == 1
+                    ):
+                        speech_playback.toggle()
+                    if (
+                        event.type == ecodes.EV_KEY
                         and event.code == ecodes.KEY_ESC
                         and event.value == 1
                     ):
@@ -159,6 +195,7 @@ def _monitor_linux_escape(stop_event, skip_event):
     finally:
         for device in devices:
             device.close()
+
 
 if ENABLE_MID_RESPONSE_STOP:
     try:
@@ -268,7 +305,7 @@ def _read_respeaker_speech():
     return False
 
 
-def _open_stop_microphone(audio_callback):
+def _open_stop_microphone(audio_callback, stop_event=None):
     """Open the stop listener with the same retry/fallback policy as wake."""
 
     candidates = [WAKE_MIC_DEVICE, MIC_DEVICE, "default", None]
@@ -277,6 +314,8 @@ def _open_stop_microphone(audio_callback):
 
     for device in candidates:
         for attempt in range(1, WAKE_MIC_OPEN_RETRIES + 1):
+            if stop_event is not None and stop_event.is_set():
+                raise RuntimeError("Stop listener canceled")
             try:
                 stream = sd.InputStream(
                     device=device,
@@ -301,7 +340,10 @@ def _open_stop_microphone(audio_callback):
                     break
 
                 if attempt < WAKE_MIC_OPEN_RETRIES:
-                    time.sleep(WAKE_MIC_RETRY_DELAY)
+                    if stop_event is not None:
+                        stop_event.wait(WAKE_MIC_RETRY_DELAY)
+                    else:
+                        time.sleep(WAKE_MIC_RETRY_DELAY)
 
     if last_error is not None:
         raise last_error
@@ -326,7 +368,7 @@ def _monitor_stop_phrase(stop_event, ready_event=None):
 
     stream = None
     try:
-        stream = _open_stop_microphone(audio_callback)
+        stream = _open_stop_microphone(audio_callback, stop_event)
         try:
             if ready_event is not None:
                 ready_event.set()
@@ -372,7 +414,7 @@ def _monitor_stop_phrase(stop_event, ready_event=None):
                     return
         finally:
             try:
-                stream.stop()
+                stream.abort()
             finally:
                 stream.close()
     except Exception as e:
@@ -425,7 +467,9 @@ def _split_tts_text(text, max_chars=None):
     return chunks or [text]
 
 
-def _render_speech_unit(speech_unit, output_file, sentence_silence=None):
+def _render_speech_unit(
+    speech_unit, output_file, sentence_silence=None, cancel_event=None
+):
     """Render one chunk to its own file for look-ahead synthesis."""
     text, emphasized, _pause_after, _action_after = speech_unit
     length_scale = TTS_LENGTH_SCALE
@@ -445,6 +489,7 @@ def _render_speech_unit(speech_unit, output_file, sentence_silence=None):
         output_file,
         length_scale=length_scale,
         sentence_silence=sentence_silence,
+        cancel_event=cancel_event,
     ):
         return output_file
     return None
@@ -555,9 +600,7 @@ def _split_explicit_pause_segments(text):
         cleaned = piece.strip()
         if not cleaned:
             continue
-        if re.fullmatch(
-            r"\[(?:Pause|HumorPause)\]", cleaned, flags=re.IGNORECASE
-        ):
+        if re.fullmatch(r"\[(?:Pause|HumorPause)\]", cleaned, flags=re.IGNORECASE):
             if segments:
                 pause_seconds = (
                     TTS_HUMOR_PAUSE_SECONDS
@@ -593,7 +636,7 @@ def _split_script_action_segments(text):
         flags=re.IGNORECASE,
     )
     pieces = re.split(
-        r"\s*(\[Smile\])\s*",
+        r"\s*(\[(?:Smile|BibleStart\d+|BibleEnd)\])\s*",
         prepared,
         flags=re.IGNORECASE,
     )
@@ -604,6 +647,12 @@ def _split_script_action_segments(text):
             continue
         if re.fullmatch(r"\[Smile\]", piece, flags=re.IGNORECASE):
             segments.append((pending_text.strip(), "smile"))
+            pending_text = ""
+        elif re.fullmatch(r"\[BibleStart\d+\]", piece, flags=re.IGNORECASE):
+            segments.append((pending_text.strip(), "bible_start:" + piece[11:-1]))
+            pending_text = ""
+        elif piece.casefold() == "[bibleend]":
+            segments.append((pending_text.strip(), "bible_end"))
             pending_text = ""
         else:
             pending_text = f"{pending_text} {piece}".strip()
@@ -628,6 +677,13 @@ def _append_smile_response(speech_units, action_start):
         speech_units[-1] = (*unit[:3], "smile")
     else:
         speech_units.append(("", False, 0.0, "smile"))
+
+
+def _wait_after_bible_reading(stop_event):
+    """Keep the Bible passage visible before returning to the slide."""
+
+    if SCRIPTED_BIBLE_RETURN_DELAY_SECONDS > 0:
+        stop_event.wait(SCRIPTED_BIBLE_RETURN_DELAY_SECONDS)
 
 
 def _perform_smile_wink():
@@ -669,22 +725,6 @@ def _set_smile_gesture_lock(active):
         print(f"⚠️ Smile gesture lock unavailable: {exc}")
 
 
-def _apply_pronunciation_overrides(text):
-    """Apply whole-word, case-insensitive respellings only for Piper input."""
-    spoken_text = str(text)
-
-    for written, pronunciation in TTS_PRONUNCIATION_OVERRIDES.items():
-        pattern = rf"(?<!\w){re.escape(written)}(?!\w)"
-        spoken_text = re.sub(
-            pattern,
-            lambda _match, replacement=pronunciation: replacement,
-            spoken_text,
-            flags=re.IGNORECASE,
-        )
-
-    return spoken_text
-
-
 def _strip_speech_control_markers(text):
     """Guarantee that internal speech/action markers never reach Piper."""
 
@@ -701,20 +741,17 @@ def generate_speech_file(
     output_file="temp.wav",
     length_scale=None,
     sentence_silence=None,
+    cancel_event=None,
 ):
     """Generate one Piper WAV, optionally for a reusable personality cache."""
-    if state.shutting_down:
+    if state.shutting_down or (cancel_event is not None and cancel_event.is_set()):
         return False
 
     text = _strip_speech_control_markers(text)
-    text = _apply_pronunciation_overrides(text)
-    selected_length_scale = (
-        TTS_LENGTH_SCALE if length_scale is None else length_scale
-    )
+    text = apply_pronunciation_overrides(text)
+    selected_length_scale = TTS_LENGTH_SCALE if length_scale is None else length_scale
     selected_sentence_silence = (
-        TTS_SENTENCE_SILENCE
-        if sentence_silence is None
-        else sentence_silence
+        TTS_SENTENCE_SILENCE if sentence_silence is None else sentence_silence
     )
     if ENABLE_PERSISTENT_PIPER:
         try:
@@ -723,9 +760,14 @@ def generate_speech_file(
                 output_file,
                 selected_length_scale,
                 selected_sentence_silence,
+                timeout_seconds=TTS_SYNTHESIS_TIMEOUT_SECONDS,
+                cancel_event=cancel_event,
             ):
                 return True
             print("⚠️ Persistent Piper unavailable; using one-shot synthesis")
+        except (SynthesisCancelled, TimeoutError) as exc:
+            print(f"⚠️ Synthesis stopped: {exc}")
+            return False
         except Exception as exc:
             print(f"⚠️ Persistent Piper failed; using one-shot synthesis: {exc}")
 
@@ -741,25 +783,19 @@ def generate_speech_file(
         os.fspath(output_file),
     ]
     try:
-        result = subprocess.run(
-            cmd,
-            input=text,
-            text=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
-    except OSError as e:
+        succeeded = run_once(cmd, text, TTS_SYNTHESIS_TIMEOUT_SECONDS, cancel_event)
+    except (OSError, SynthesisCancelled) as e:
         print(f"⚠️ TTS generation failed: {e}")
         return False
 
-    return result.returncode == 0 and os.path.exists(output_file)
+    return succeeded and os.path.exists(output_file)
 
 
 def _generate_combined_speech_file(
     speech_units,
     output_file="temp.wav",
     sentence_silence=None,
+    cancel_event=None,
 ):
     """Synthesize marked segments and join them with controlled pauses."""
     with tempfile.TemporaryDirectory(prefix="ezra-speech-") as directory:
@@ -788,6 +824,7 @@ def _generate_combined_speech_file(
                 path,
                 length_scale=length_scale,
                 sentence_silence=sentence_silence,
+                cancel_event=cancel_event,
             ):
                 return False
             rendered.append(path)
@@ -844,11 +881,9 @@ def _generate_combined_speech_file(
                     next_delivery = speech_units[index + 1][1]
                     humor_deliveries = ("humor", "humor_emphasis")
                     humor_to_emphasis = (
-                        current_delivery in humor_deliveries
-                        and next_delivery is True
+                        current_delivery in humor_deliveries and next_delivery is True
                     ) or (
-                        current_delivery is True
-                        and next_delivery in humor_deliveries
+                        current_delivery is True and next_delivery in humor_deliveries
                     )
                     within_humor = (
                         current_delivery in humor_deliveries
@@ -879,8 +914,7 @@ def prepare_speech_cache(texts):
     for text in texts:
         key = str(text)
         identity = (
-            f"{TTS_MODEL_PATH}|{TTS_LENGTH_SCALE}|"
-            f"{TTS_SENTENCE_SILENCE}|{key}"
+            f"{TTS_MODEL_PATH}|{TTS_LENGTH_SCALE}|" f"{TTS_SENTENCE_SILENCE}|{key}"
         )
         digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
         path = cache_dir / f"{digest}.wav"
@@ -911,6 +945,11 @@ def _play_speech_file(
             deduped_candidates.append(candidate)
 
     for device in deduped_candidates:
+        while speech_playback.is_paused(stop_event):
+            watchdog.progress()
+            stop_event.wait(0.02)
+        if stop_event.is_set():
+            return True
         cmd = ["aplay", os.fspath(audio_file)]
         device_label = "system-default"
 
@@ -933,9 +972,25 @@ def _play_speech_file(
         state.tts_process = proc
         playback_started_at = time.monotonic()
         last_mouth_index = -1
+        paused_at = None
 
         try:
             while proc.poll() is None:
+                now = time.monotonic()
+                paused = speech_playback.is_paused(stop_event)
+                if paused and paused_at is None:
+                    proc.send_signal(signal.SIGSTOP)
+                    paused_at = now
+                    set_talk_level(0.0)
+                elif not paused and paused_at is not None:
+                    proc.send_signal(signal.SIGCONT)
+                    playback_started_at += now - paused_at
+                    paused_at = None
+                    last_mouth_index = -1
+                if paused:
+                    watchdog.progress()
+                    stop_event.wait(0.02)
+                    continue
                 playback_elapsed = time.monotonic() - playback_started_at
                 if playback_elapsed < TTS_MOUTH_SYNC_OFFSET_SECONDS:
                     set_talk_level(0.0)
@@ -948,6 +1003,7 @@ def _play_speech_file(
                     if mouth_index != last_mouth_index:
                         set_talk_level(float(mouth_envelope[mouth_index]))
                         last_mouth_index = mouth_index
+                        watchdog.progress()
 
                 if stop_event.is_set():
                     proc.terminate()
@@ -973,6 +1029,7 @@ def _play_speech_file(
     return None
 
 
+@_serialized_speech
 def speak(
     text,
     allow_mid_response_stop=True,
@@ -984,7 +1041,9 @@ def speak(
     chunk_max_chars=None,
     allow_escape_stop=True,
     sentence_silence=None,
+    on_playback_end=None,
 ):
+    global _active_speech_stop_event
     if state.shutting_down:
         return False
 
@@ -1001,6 +1060,8 @@ def speak(
     # Open the live stop listener before playback so the speaker device does
     # not win the hardware race and hide "Ezra stop" from the microphone.
     stop_event = threading.Event()
+    _active_speech_stop_event = stop_event
+    speech_playback.begin(stop_event)
     ready_event = threading.Event()
     monitor_thread = None
     keyboard_thread = None
@@ -1034,7 +1095,6 @@ def speak(
                 stop_event,
                 keyboard_skip,
                 keyboard_ready,
-                allow_keyboard_skip,
             ),
             daemon=True,
         )
@@ -1048,7 +1108,6 @@ def speak(
         linux_keyboard_thread.start()
 
     if presentation_skip_event is not None:
-        presentation_skip_event.clear()
         external_keyboard_thread = threading.Thread(
             target=_monitor_external_presentation_skip,
             args=(stop_event, keyboard_skip, presentation_skip_event),
@@ -1056,7 +1115,18 @@ def speak(
         )
         external_keyboard_thread.start()
 
+    streaming_directory = None
+    streaming_executor = None
+    script_display = None
     try:
+        if re.search(r"\[Read\b", str(text), flags=re.IGNORECASE):
+            from narration_script import expand_bible_readings, ScriptBibleDisplay
+
+            readings = []
+            text = expand_bible_readings(
+                text, cancel_event=stop_event, readings=readings
+            )
+            script_display = ScriptBibleDisplay(readings)
         speech_units = []
         for action_text, action_after in _split_script_action_segments(text):
             action_start = len(speech_units)
@@ -1081,6 +1151,8 @@ def speak(
             if action_after is not None:
                 if action_after == "smile":
                     _append_smile_response(speech_units, action_start)
+                else:
+                    speech_units.append(("", False, 0.0, action_after))
         combined_audio_file = None
         speech_character_count = sum(len(unit[0]) for unit in speech_units)
         trailing_action = speech_units[-1][3] if speech_units else None
@@ -1101,6 +1173,7 @@ def speak(
                 speech_units,
                 combined_audio_file,
                 sentence_silence=sentence_silence,
+                cancel_event=stop_event,
             ):
                 # A trailing gesture still happens after the joined recording.
                 speech_units = [("", False, 0.0, trailing_action)]
@@ -1133,6 +1206,7 @@ def speak(
                 speech_units[0],
                 first_path,
                 sentence_silence,
+                stop_event,
             )
 
         for index, (
@@ -1157,20 +1231,18 @@ def speak(
                     break
                 if index + 1 < len(speech_units):
                     next_path = (
-                        Path(streaming_directory.name)
-                        / f"chunk-{index + 1}.wav"
+                        Path(streaming_directory.name) / f"chunk-{index + 1}.wav"
                     )
                     render_future = streaming_executor.submit(
                         _render_speech_unit,
                         speech_units[index + 1],
                         next_path,
                         sentence_silence,
+                        stop_event,
                     )
             if chunk_audio_file is None and chunk:
                 chunk_audio_file = (
-                    audio_file
-                    if len(speech_units) == 1 and not emphasized
-                    else None
+                    audio_file if len(speech_units) == 1 and not emphasized else None
                 )
             if chunk_audio_file is None and chunk:
                 length_scale = TTS_LENGTH_SCALE
@@ -1189,6 +1261,7 @@ def speak(
                     chunk,
                     length_scale=length_scale,
                     sentence_silence=sentence_silence,
+                    cancel_event=stop_event,
                 ):
                     playback_completed = False
                     break
@@ -1222,6 +1295,8 @@ def speak(
                         print(f"⚠️ TTS playback-start callback failed: {e}")
                     playback_started = True
 
+                if script_display is not None:
+                    script_display.begin_reading()
                 playback_result = _play_speech_file(
                     stop_event, mouth_envelope, mouth_frame_seconds, chunk_audio_file
                 )
@@ -1238,6 +1313,12 @@ def speak(
                 break
             if _pause_after > 0 and combined_audio_file is None:
                 stop_event.wait(_pause_after)
+            if script_display is not None and not stop_event.is_set():
+                if action_after and action_after.startswith("bible_start:"):
+                    script_display.open(int(action_after.split(":", 1)[1]))
+                elif action_after == "bible_end":
+                    _wait_after_bible_reading(stop_event)
+                    script_display.close()
             if action_after == "pause" and not stop_event.is_set():
                 stop_event.wait(TTS_SMILE_PAUSE_SECONDS)
             elif action_after == "smile" and not stop_event.is_set():
@@ -1257,19 +1338,18 @@ def speak(
                     )
                     _perform_smile_wink()
                     elapsed = time.monotonic() - gesture_started_at
-                    stop_event.wait(
-                        max(0.0, TTS_SMILE_PAUSE_SECONDS - elapsed)
-                    )
+                    stop_event.wait(max(0.0, TTS_SMILE_PAUSE_SECONDS - elapsed))
                 finally:
                     set_emotion(EMOTION_TALKING)
                     _set_smile_gesture_lock(False)
 
+        if stop_event.is_set():
+            if keyboard_skip.is_set():
+                skipped_by_keyboard = True
+            else:
+                interrupted_by_stop = True
+            playback_completed = skipped_by_keyboard
         note_speech_finished()
-
-        if streaming_executor is not None:
-            streaming_executor.shutdown(wait=True, cancel_futures=True)
-        if streaming_directory is not None:
-            streaming_directory.cleanup()
 
         if playback_completed and on_playback_complete is not None:
             try:
@@ -1278,6 +1358,20 @@ def speak(
                 print(f"⚠️ TTS playback-complete callback failed: {e}")
     finally:
         stop_event.set()
+        speech_playback.end(stop_event)
+        if script_display is not None:
+            script_display.close()
+        # Notify displays before waiting for synthesis/listener cleanup or
+        # speaking the stop confirmation, including when playback failed.
+        if on_playback_end is not None:
+            try:
+                on_playback_end()
+            except Exception as e:
+                print(f"⚠️ TTS playback-end callback failed: {e}")
+        if streaming_executor is not None:
+            streaming_executor.shutdown(wait=True, cancel_futures=True)
+        if streaming_directory is not None:
+            streaming_directory.cleanup()
         set_talk_level(0.0)
         if smile_head_held:
             _set_smile_head_hold(False)
@@ -1290,6 +1384,8 @@ def speak(
         if linux_keyboard_thread is not None:
             linux_keyboard_thread.join(timeout=0.5)
         _flush_stop_model()
+        if _active_speech_stop_event is stop_event:
+            _active_speech_stop_event = None
 
     # Return to wake-word standby.
     set_emotion(EMOTION_STANDBY)

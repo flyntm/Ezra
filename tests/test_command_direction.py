@@ -5,6 +5,7 @@ import math
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
+from unittest.mock import Mock, call
 
 import config
 
@@ -15,31 +16,52 @@ class CommandDirectionTests(unittest.TestCase):
         source = Path(__file__).resolve().parents[1] / "wake_word.py"
         tree = ast.parse(source.read_text())
         functions = {
-            "_mean_signed_doa", "_angular_difference",
-            "_circular_mean_degrees", "_qualify_command_doa",
+            "_mean_signed_doa",
+            "_angular_difference",
+            "_circular_mean_degrees",
+            "_qualify_command_doa",
+            "_log_sound_gaze_rejection",
         }
         cls.namespace = {name: getattr(config, name) for name in dir(config)}
         cls.namespace.update(math=math, SAMPLE_RATE=config.WAKE_SAMPLE_RATE)
+        log_function = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "_log_sound_gaze_rejection"
+        )
+        cls.log_function_code = compile(
+            ast.Module(body=[log_function], type_ignores=[]), str(source), "exec"
+        )
         # Import only pure functions: importing wake_word itself opens the mic
         # and loads wake models at module scope.
         pure = ast.Module(
-            body=[node for node in tree.body
-                  if isinstance(node, ast.FunctionDef) and node.name in functions],
+            body=[
+                node
+                for node in tree.body
+                if isinstance(node, ast.FunctionDef) and node.name in functions
+            ],
             type_ignores=[],
         )
         exec(compile(pure, str(source), "exec"), cls.namespace)
         sample = next(
-            node for node in ast.walk(tree)
+            node
+            for node in ast.walk(tree)
             if isinstance(node, ast.Assign)
-            and any(isinstance(target, ast.Name) and target.id == "sample"
-                    for target in node.targets)
+            and any(
+                isinstance(target, ast.Name) and target.id == "sample"
+                for target in node.targets
+            )
         )
         cls.sample_code = compile(ast.Expression(sample.value), str(source), "eval")
         history = next(
-            node for node in ast.walk(tree)
+            node
+            for node in ast.walk(tree)
             if isinstance(node, ast.Assign)
-            and any(isinstance(target, ast.Name) and target.id == "active_wake_angles"
-                    for target in node.targets)
+            and any(
+                isinstance(target, ast.Name) and target.id == "active_wake_angles"
+                for target in node.targets
+            )
         )
         cls.history_code = compile(ast.Expression(history.value), str(source), "eval")
 
@@ -79,11 +101,37 @@ class CommandDirectionTests(unittest.TestCase):
         self.assertFalse(result["qualified"])
 
     def test_old_direction_samples_expire_even_without_new_speech(self):
-        result = eval(self.history_code, {
-            "wake_direction_history": [(10.0, 286.0), (99.0, 210.0)],
-            "history_cutoff": 98.9,
-        })
+        result = eval(
+            self.history_code,
+            {
+                "wake_direction_history": [(10.0, 286.0), (99.0, 210.0)],
+                "history_cutoff": 98.9,
+            },
+        )
         self.assertEqual(result, [210.0])
+
+    def test_rejection_logs_are_rate_limited_by_reason(self):
+        namespace = dict(self.namespace)
+        namespace.update(
+            time=SimpleNamespace(monotonic=Mock(side_effect=(10.0, 11.0, 11.5, 13.1))),
+            print=Mock(),
+            _last_sound_gaze_rejection_at={},
+        )
+        exec(self.log_function_code, namespace)
+
+        namespace["_log_sound_gaze_rejection"]("cluster", "first cluster")
+        namespace["_log_sound_gaze_rejection"]("cluster", "repeated cluster")
+        namespace["_log_sound_gaze_rejection"]("rear", "rear bearing")
+        namespace["_log_sound_gaze_rejection"]("cluster", "cluster after interval")
+
+        self.assertEqual(
+            namespace["print"].call_args_list,
+            [
+                call("first cluster"),
+                call("rear bearing"),
+                call("cluster after interval"),
+            ],
+        )
 
 
 if __name__ == "__main__":

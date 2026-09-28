@@ -7,8 +7,52 @@ import ezra_brain
 
 
 class EzraBrainTests(unittest.TestCase):
+    def test_remainder_delivery_failure_does_not_repeat_first_sentence(self):
+        class Stream:
+            def __enter__(self):
+                return iter([SimpleNamespace(type="response.output_text.delta",
+                    delta='{"emotion":"neutral","response":"First. Second."}')])
+
+            def __exit__(self, *args):
+                return False
+
+        client = Mock()
+        client.responses.stream.return_value = Stream()
+        callback = Mock(side_effect=[False, OSError("disk unavailable")])
+        with patch.dict(os.environ, {"EZRA_AI_PROVIDER": "openai"}), patch(
+            "ezra_brain.internet_access_allowed", return_value=True
+        ), patch("ezra_brain._get_openai_client", return_value=client), patch(
+            "ezra_brain._ask_openai"
+        ) as fallback:
+            result = ezra_brain.ask_ezra("A question", on_sentence=callback)
+        fallback.assert_not_called()
+        self.assertTrue(result["streamed"])
+        self.assertTrue(result["interrupted"])
+        self.assertEqual(result["response"], "First.")
+
+    def test_offline_request_ensures_local_readiness_before_posting(self):
+        calls = []
+        self.start_local.side_effect = lambda: calls.append("start")
+        response = Mock()
+        response.json.return_value = {"choices": [{"message": {"content":
+            '{"emotion":"neutral","response":"Local answer."}'}}]}
+
+        def post(*args, **kwargs):
+            calls.append("post")
+            return response
+
+        with patch.dict(os.environ, {"EZRA_AI_PROVIDER": "openai"}), patch(
+            "ezra_brain.internet_access_allowed", return_value=False
+        ), patch("ezra_brain.requests.post", side_effect=post):
+            result = ezra_brain.ask_ezra("A question")
+        self.assertEqual(calls, ["start", "post"])
+        self.assertEqual(result["response"], "Local answer.")
+
     def setUp(self):
         ezra_brain.conversation_history = []
+        self.local_start = patch("ezra_brain.start_local_ai_server", return_value=True)
+        self.start_local = self.local_start.start()
+        self.addCleanup(self.local_start.stop)
 
     def test_local_provider_uses_loopback_chat_api(self):
         response = Mock()
@@ -33,6 +77,7 @@ class EzraBrainTests(unittest.TestCase):
             {"emotion": "curious", "response": "A servo moves a robot part."},
         )
         request = post.call_args
+        self.start_local.assert_called_once_with()
         self.assertIn('"Flynt"', request.kwargs["json"]["messages"][0]["content"])
         self.assertEqual(
             request.args[0],

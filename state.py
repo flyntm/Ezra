@@ -1,4 +1,5 @@
 shutting_down = False
+exit_requested = False
 
 # Currently active aplay process for speech output.
 tts_process = None
